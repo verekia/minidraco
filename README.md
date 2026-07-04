@@ -26,6 +26,13 @@ no-ops). Decoding runs in a pool of module workers (default 4, `setWorkerLimit(n
 `0` to force synchronous main-thread decoding). If workers can't be spawned (SSR, exotic
 bundlers), it falls back to synchronous decoding automatically.
 
+**Serving JS from a CDN origin** (Next.js `assetPrefix`, etc.) works out of the box: browsers
+refuse to construct a Worker from a cross-origin script, so minidraco bootstraps the worker
+through a same-origin blob module that imports the hashed CDN asset (a CORS request — your CDN
+must send `Access-Control-Allow-Origin`, which it already does if you load models or fonts from
+it). If even that fails, decoding falls back to the main thread rather than erroring.
+`setWorkerUrl(url)` exists as a manual override for exotic setups.
+
 Or decode a raw Draco bitstream without Three.js:
 
 ```ts

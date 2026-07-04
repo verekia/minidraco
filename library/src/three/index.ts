@@ -92,6 +92,10 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
   // Set when spawning a worker fails (bundler without module-worker support,
   // file:// pages, …): decoding transparently falls back to the main thread.
   _workersBroken: boolean
+  _workerUrl: string | URL | null
+  // Same-origin blob bootstrap used when the worker asset lives on a CDN
+  // origin (created lazily, revoked on dispose).
+  _workerBlobUrl: string | null
 
   constructor(manager?: LoadingManager) {
     super(manager)
@@ -115,6 +119,17 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
     this._taskId = 0
     this._tasks = new Map()
     this._workersBroken = false
+    this._workerUrl = null
+    this._workerBlobUrl = null
+  }
+
+  // Overrides where the decode worker is loaded from. Normally unnecessary:
+  // the worker resolves through `new URL('./worker.js', import.meta.url)`
+  // (bundlers emit it as a hashed asset), and CDN origins are handled by the
+  // blob bootstrap in _getWorker.
+  setWorkerUrl(url: string | URL | null): this {
+    this._workerUrl = url
+    return this
   }
 
   // Kept for API compatibility with THREE.DRACOLoader — minidraco has no
@@ -141,6 +156,10 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
     for (const entry of this._workers) entry.worker.terminate()
     this._workers = []
     this._tasks.clear()
+    if (this._workerBlobUrl !== null) {
+      URL.revokeObjectURL(this._workerBlobUrl)
+      this._workerBlobUrl = null
+    }
     return this
   }
 
@@ -234,12 +253,39 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
     return this.workerLimit > 0 && typeof Worker !== 'undefined' && !this._workersBroken
   }
 
-  _getWorker(): WorkerEntry {
+  _getWorker(): WorkerEntry | null {
+    if (this._workersBroken) return null
+
     if (this._workers.length < this.workerLimit) {
-      // The `new Worker(new URL(...), ...)` pattern is statically analyzed and
-      // bundled by webpack / turbopack / vite; it also works unbundled from
-      // the library dist because worker.js is a self-contained module.
-      const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
+      // `new URL('./worker.js', import.meta.url)` is recognized by webpack /
+      // turbopack / vite and emitted as a hashed static asset; unbundled, it
+      // resolves to the self-contained dist/worker.js next to this file.
+      // (Kept as a standalone expression — not inline in `new Worker(...)` —
+      // so bundlers emit a plain asset URL instead of a worker chunk.)
+      const workerUrl = this._workerUrl ?? new URL('./worker.js', import.meta.url)
+
+      let worker: Worker
+      try {
+        worker = new Worker(workerUrl, { type: 'module' })
+      } catch {
+        // Typically a SecurityError: the asset lives on a CDN origin (Next.js
+        // assetPrefix), and browsers refuse to construct a Worker from a
+        // cross-origin script. Bootstrap through a same-origin blob module
+        // that imports the CDN URL instead (the import is a CORS request, so
+        // the CDN must send Access-Control-Allow-Origin — as it already must
+        // for fonts/models). If that import fails, the worker's error event
+        // trips the sync fallback below.
+        try {
+          if (this._workerBlobUrl === null) {
+            const bootstrap = `import ${JSON.stringify(String(workerUrl))};`
+            this._workerBlobUrl = URL.createObjectURL(new Blob([bootstrap], { type: 'text/javascript' }))
+          }
+          worker = new Worker(this._workerBlobUrl, { type: 'module' })
+        } catch {
+          this._workersBroken = true
+          return null
+        }
+      }
       const entry: WorkerEntry = { worker, pending: 0 }
 
       worker.onmessage = (event: MessageEvent) => {
@@ -280,6 +326,10 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
 
   _decodeInWorker(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<RawGeometry> {
     const entry = this._getWorker()
+    if (entry === null) {
+      // Worker spawn failed; _runTask falls back to the synchronous path.
+      return Promise.reject(new Error('MiniDRACOLoader: worker unavailable'))
+    }
     const id = this._taskId++
 
     return new Promise<RawGeometry>((resolve, reject) => {

@@ -1,6 +1,6 @@
 {
   "name": "minidraco",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A fast pure-TypeScript Draco mesh decoder, drop-in DRACOLoader replacement for Three.js.",
   "license": "MIT",
   "files": [
@@ -33,5 +33,10 @@
   },
   "peerDependencies": {
     "three": ">=0.170"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
   }
 }
