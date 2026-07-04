@@ -1,5 +1,7 @@
 // Ported from draco.js src/mesh/MeshAttributeCornerTable.js (MIT)
 
+import { scratchInt32 } from '../core/ScratchArena'
+
 import type { CornerTable } from '../compression/mesh/MeshEdgebreakerDecoderImpl'
 
 const kInvalidCornerIndex = -1
@@ -248,8 +250,11 @@ class MeshAttributeCornerTable {
       } else {
         // Bulk-copy the base opposites, then punch out only the seam edges: a
         // memcpy plus a sparse fix-up beats a per-corner ct.opposite()
-        // dispatch loop (this build was ~10% of total decode time).
-        const eff = base.slice(0, nc)
+        // dispatch loop (this build was ~10% of total decode time). The copy
+        // lives in decode-scoped scratch — this table (and the traversal
+        // cache entries that may share it) never outlives the decode.
+        const eff = scratchInt32(nc)
+        eff.set(base.length === nc ? base : base.subarray(0, nc))
         for (let i = 0, l = seamCorners.length; i < l; ++i) {
           eff[seamCorners[i]] = kInvalidCornerIndex
         }

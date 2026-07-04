@@ -1,6 +1,7 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerDecoderImpl.js (MIT)
 
 import { DecoderBuffer } from '../../core/DecoderBuffer'
+import { scratchInt32 } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { MeshAttributeElementType } from '../../mesh/Mesh'
 import { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTable'
@@ -352,7 +353,8 @@ class MeshEdgebreakerDecoderImpl {
 
   _decodeConnectivity(numSymbols: number): number {
     // Reverse decoding of the edgebreaker-encoded symbols.
-    const activeCornerStack = new Int32Array(numSymbols + this._topologySplitData.length + 16)
+    // Decode-scoped scratch; entries are always written before being read.
+    const activeCornerStack = scratchInt32(numSymbols + this._topologySplitData.length + 16)
     let activeCornerStackSize = 0
     const topologySplitActiveCorners = new Map<number, number>()
     const invalidVertices: number[] = []

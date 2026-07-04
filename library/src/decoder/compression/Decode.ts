@@ -1,6 +1,7 @@
 // Ported from draco.js src/compression/Decode.js (MIT)
 
 import { DecoderBuffer } from '../core/DecoderBuffer'
+import { releaseScratch } from '../core/ScratchArena'
 import { Mesh } from '../mesh/Mesh'
 import { EncodedGeometryType, MeshEncoderMethod, DracoHeader } from './config/CompressionShared'
 import { DecoderOptions } from './config/DecoderOptions'
@@ -77,8 +78,14 @@ class Decoder {
     }
 
     const decoder = createMeshDecoder(result.header.encoderMethod)
-    const status = decoder.decodeMesh(this.options_, inBuffer, outGeometry)
-    return { ok: status.ok(), message: status.errorMsg }
+    try {
+      const status = decoder.decodeMesh(this.options_, inBuffer, outGeometry)
+      return { ok: status.ok(), message: status.errorMsg }
+    } finally {
+      // The result mesh only references attribute buffers and faces_, never
+      // scratch — everything borrowed during the decode goes back to the pool.
+      releaseScratch()
+    }
   }
 
   options(): DecoderOptions {

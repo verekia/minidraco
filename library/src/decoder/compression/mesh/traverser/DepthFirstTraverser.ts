@@ -1,5 +1,7 @@
 // Ported from draco.js src/compression/mesh/traverser/DepthFirstTraverser.js (MIT)
 
+import { scratchInt32, scratchUint8Zeroed } from '../../../core/ScratchArena'
+
 import type { MeshAttributeCornerTable } from '../../../mesh/MeshAttributeCornerTable'
 import type { CornerTable } from '../MeshEdgebreakerDecoderImpl'
 import type { MeshAttributeIndicesEncodingObserver } from './MeshAttributeIndicesEncodingObserver'
@@ -41,10 +43,8 @@ class DepthFirstTraverser {
   init(cornerTable: CornerTable | MeshAttributeCornerTable, observer: MeshAttributeIndicesEncodingObserver): void {
     this._cornerTable = cornerTable
     this._observer = observer
-    // Uint8Array (0/1) instead of Array(bool): these flags are read and written
-    // on every corner of the hottest decode loop (traverseFromCorner).
-    this._isFaceVisited = new Uint8Array(cornerTable.numFaces())
-    this._isVertexVisited = new Uint8Array(cornerTable.numVertices())
+    this._isFaceVisited = null
+    this._isVertexVisited = null
     this._numVisitedFaces = 0
     // Extract the corner table's connectivity as flat arrays once, so the
     // traversal reads them directly (via the monomorphic _* helpers below)
@@ -55,14 +55,25 @@ class DepthFirstTraverser {
     this._oppositeCorners = cornerTable.oppositeCornerArray()
     this._vertexLeftmost = cornerTable.vertexLeftmostCornerArray()
     this._numCorners = cornerTable.numCorners()
-    this._cornerTraversalStack = new Int32Array(this._numCorners)
   }
 
   cornerTable(): CornerTable | MeshAttributeCornerTable | null {
     return this._cornerTable
   }
 
-  onTraversalStart(): void {}
+  // The per-corner scratch buffers are allocated here rather than in init():
+  // when the shared traversal cache hits, generateSequence returns before
+  // any traversal and the buffers would be allocated for nothing.
+  // Uint8Array (0/1) instead of Array(bool): these flags are read and written
+  // on every corner of the hottest decode loop (traverseFromCorner).
+  onTraversalStart(): void {
+    const cornerTable = this._cornerTable!
+    // Decode-scoped scratch: released in bulk at the end of the decode.
+    this._isFaceVisited = scratchUint8Zeroed(cornerTable.numFaces())
+    this._isVertexVisited = scratchUint8Zeroed(cornerTable.numVertices())
+    this._cornerTraversalStack = scratchInt32(this._numCorners)
+  }
+
   onTraversalEnd(): void {}
 
   traverseFromCorner(cornerId: number): boolean {
@@ -79,6 +90,18 @@ class DepthFirstTraverser {
     const stack = this._cornerTraversalStack
     let numVisitedFaces = this._numVisitedFaces
 
+    // Inline observer.onNewVertexVisited/sequencer.addPointId: four flat-array
+    // writes per new vertex, in the hottest decode loop. The counters are
+    // hoisted to locals and written back on every return path below.
+    const sequencer = observer._sequencer
+    const encodingData = observer._encodingData
+    const obsFaces = observer._faces
+    const encodedToCornerMap = observer._encodedToCornerMap
+    const vertexToEncodedMap = observer._vertexToEncodedMap
+    const outPointIds = sequencer._outPointIds
+    let numOutPoints = sequencer._numOutPoints
+    let numValues = encodingData.numValues
+
     let stackSize = 0
     stack[stackSize++] = cornerId
 
@@ -92,11 +115,15 @@ class DepthFirstTraverser {
     }
     if (!isVertexVisited[nextVert]) {
       isVertexVisited[nextVert] = 1
-      observer.onNewVertexVisited(nextVert, nextCorner)
+      outPointIds[numOutPoints++] = obsFaces[nextCorner]
+      encodedToCornerMap[numValues] = nextCorner
+      vertexToEncodedMap[nextVert] = numValues++
     }
     if (!isVertexVisited[prevVert]) {
       isVertexVisited[prevVert] = 1
-      observer.onNewVertexVisited(prevVert, prevCorner)
+      outPointIds[numOutPoints++] = obsFaces[prevCorner]
+      encodedToCornerMap[numValues] = prevCorner
+      vertexToEncodedMap[prevVert] = numValues++
     }
 
     while (stackSize > 0) {
@@ -114,6 +141,8 @@ class DepthFirstTraverser {
 
         const vertId = cornerToVertex[cornerId]
         if (vertId === kInvalidVertexIndex) {
+          sequencer._numOutPoints = numOutPoints
+          encodingData.numValues = numValues
           return false
         }
         if (!isVertexVisited[vertId]) {
@@ -125,7 +154,9 @@ class DepthFirstTraverser {
             onBoundary = oppositeCorners[nextLc] < 0
           }
           isVertexVisited[vertId] = 1
-          observer.onNewVertexVisited(vertId, cornerId)
+          outPointIds[numOutPoints++] = obsFaces[cornerId]
+          encodedToCornerMap[numValues] = cornerId
+          vertexToEncodedMap[vertId] = numValues++
           if (!onBoundary) {
             // Move to the right corner: opposite(next(cornerId)).
             const nextCornerId = cornerId % 3 === 2 ? cornerId - 2 : cornerId + 1
@@ -171,6 +202,8 @@ class DepthFirstTraverser {
       }
     }
     this._numVisitedFaces = numVisitedFaces
+    sequencer._numOutPoints = numOutPoints
+    encodingData.numValues = numValues
     return true
   }
 }

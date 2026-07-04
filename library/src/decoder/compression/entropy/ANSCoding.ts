@@ -202,12 +202,72 @@ export class RAnsDecoder {
 
   // Batch ransRead() into out[0..count): all fields hoisted to locals, state
   // written back once. Removes per-symbol property reads and call indirection.
+  // lutTable's element type varies per decoder (Uint8/16/32 by symbol count),
+  // which would make the hot lutTable[rem] access site polymorphic — dispatch
+  // once here so each loop body stays monomorphic on its concrete type. The
+  // three bodies are intentionally identical copies.
   decodeSymbols(out: Uint32Array, count: number): void {
+    const lutTable = this.lutTable!
+    if (lutTable instanceof Uint8Array) {
+      this._decodeSymbolsU8(out, count, lutTable)
+    } else if (lutTable instanceof Uint16Array) {
+      this._decodeSymbolsU16(out, count, lutTable)
+    } else {
+      this._decodeSymbolsU32(out, count, lutTable)
+    }
+  }
+
+  _decodeSymbolsU8(out: Uint32Array, count: number, lutTable: Uint8Array): void {
     const buf = this.buf!
     const lRansBase = this.lRansBase
     const ransPrecisionBits = this.ransPrecisionBits
     const ransPrecisionMask = this.ransPrecisionMask
-    const lutTable = this.lutTable!
+    const probTable = this.probTable!
+    const cumProbTable = this.cumProbTable!
+    let state = this.state
+    let bufOffset = this.bufOffset
+    const bufStart = this.bufStart
+    for (let i = 0; i < count; ++i) {
+      while (state < lRansBase && bufOffset > bufStart) {
+        state = (state << 8) | buf[--bufOffset]
+      }
+      const rem = state & ransPrecisionMask
+      const symbol = lutTable[rem]
+      out[i] = symbol
+      state = (state >>> ransPrecisionBits) * probTable[symbol] + rem - cumProbTable[symbol]
+    }
+    this.state = state
+    this.bufOffset = bufOffset
+  }
+
+  _decodeSymbolsU16(out: Uint32Array, count: number, lutTable: Uint16Array): void {
+    const buf = this.buf!
+    const lRansBase = this.lRansBase
+    const ransPrecisionBits = this.ransPrecisionBits
+    const ransPrecisionMask = this.ransPrecisionMask
+    const probTable = this.probTable!
+    const cumProbTable = this.cumProbTable!
+    let state = this.state
+    let bufOffset = this.bufOffset
+    const bufStart = this.bufStart
+    for (let i = 0; i < count; ++i) {
+      while (state < lRansBase && bufOffset > bufStart) {
+        state = (state << 8) | buf[--bufOffset]
+      }
+      const rem = state & ransPrecisionMask
+      const symbol = lutTable[rem]
+      out[i] = symbol
+      state = (state >>> ransPrecisionBits) * probTable[symbol] + rem - cumProbTable[symbol]
+    }
+    this.state = state
+    this.bufOffset = bufOffset
+  }
+
+  _decodeSymbolsU32(out: Uint32Array, count: number, lutTable: Uint32Array): void {
+    const buf = this.buf!
+    const lRansBase = this.lRansBase
+    const ransPrecisionBits = this.ransPrecisionBits
+    const ransPrecisionMask = this.ransPrecisionMask
     const probTable = this.probTable!
     const cumProbTable = this.cumProbTable!
     let state = this.state
