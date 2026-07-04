@@ -36,9 +36,11 @@ const median = (values: number[]) => [...values].toSorted((a, b) => a - b)[Math.
 const nextTick = () => new Promise(resolve => setTimeout(resolve, 0))
 
 // How minidraco compares against another decoder's time. Differences within
-// 5% are called even — that's inside run noise.
+// 5% are called even — that's inside run noise. Chrome clamps performance.now
+// to 0.1 ms, so floor both sides at half the timer resolution to avoid
+// Infinity when a decode rounds to 0.
 const versus = (miniMs: number, otherMs: number) => {
-  const ratio = otherMs / miniMs
+  const ratio = Math.max(otherMs, 0.05) / Math.max(miniMs, 0.05)
   if (ratio >= 1.05) return `🟢 ${ratio.toFixed(2)}x faster`
   if (ratio <= 1 / 1.05) return `🔴 ${(1 / ratio).toFixed(2)}x slower`
   return '⚪ even'

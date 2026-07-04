@@ -85,6 +85,13 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
   defaultAttributeIDs: AttributeIDs
   defaultAttributeTypes: AttributeTypes
   workerLimit: number
+  // Opt-in (0 = disabled): buffers at or below this size decode synchronously
+  // on the main thread instead of paying the ~0.5 ms worker message roundtrip.
+  // Worth enabling (e.g. 4096) when the main thread is otherwise idle during
+  // loads — in a full GLTFLoader parse the main thread is already busy
+  // building geometries, and measurements show the pool wins there even for
+  // tiny primitives.
+  syncByteThreshold: number
 
   _workers: WorkerEntry[]
   _taskId: number
@@ -115,6 +122,7 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
     }
 
     this.workerLimit = 4
+    this.syncByteThreshold = 0
     this._workers = []
     this._taskId = 0
     this._tasks = new Map()
@@ -236,14 +244,21 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
 
   async _runTask(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<BufferGeometry> {
     if (this._workersAvailable()) {
-      try {
-        const raw = await this._decodeInWorker(buffer, taskConfig)
-        return this._buildGeometryFromRaw(raw, taskConfig)
-      } catch (error) {
-        // Decode errors (malformed data) carry `isDecodeError`; anything else
-        // is worker infrastructure failing — fall back to the sync path.
-        if ((error as { isDecodeError?: boolean })?.isDecodeError) throw error
-        this._workersBroken = true
+      if (buffer.byteLength > this.syncByteThreshold) {
+        try {
+          const raw = await this._decodeInWorker(buffer, taskConfig)
+          return this._buildGeometryFromRaw(raw, taskConfig)
+        } catch (error) {
+          // Decode errors (malformed data) carry `isDecodeError`; anything else
+          // is worker infrastructure failing — fall back to the sync path.
+          if ((error as { isDecodeError?: boolean })?.isDecodeError) throw error
+          this._workersBroken = true
+        }
+      } else {
+        // Tiny buffer: decode on the main thread, but yield one microtask
+        // first so a caller looping over many primitives finishes posting the
+        // large ones to the workers before we start doing sync work.
+        await Promise.resolve()
       }
     }
     return this._decodeBuffer(buffer, taskConfig)
