@@ -4,3 +4,6 @@
 example/public/textures/*
 !example/public/textures/color.png
 !example/public/textures/normal.png
+
+# draco.js sample models are local-dev only (~35 MB, /bench raw-decode benchmark)
+example/public/models/samples

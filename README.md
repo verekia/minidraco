@@ -67,6 +67,10 @@ Full cross-decoder results — the production bundles plus the 17 sample models 
 | player (5.1k / 2.5k)                 | 1.9 ms    | 1.7 ms   | 1.2 ms       |
 | static (291k / 221k, 488 primitives) | **50 ms** | 55 ms    | 51 ms        |
 
+The `/bench` page of the example runs the same fair comparison in the browser (V8): a raw
+single-threaded mode where all three decoders decode on the main thread, over the bundles plus
+the draco.js sample models (synced locally by `bun dev`, never deployed).
+
 In the browser the worker pool changes the story for real scenes — wall-clock
 `GLTFLoader.parse` of the 488-primitive static bundle (Chromium, warm loaders, `/bench` page of
 the example):

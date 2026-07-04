@@ -6,32 +6,302 @@ import { Decoder as DracoJsDecoder } from 'draco.js/src/compression/Decode.js'
 import { DecoderBuffer as DracoJsDecoderBuffer } from 'draco.js/src/core/DecoderBuffer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
-import { DECODER_KINDS, getDracoLoader } from '../lib/loaders'
+import { getDracoLoader } from '../lib/loaders'
+import {
+  decodeRawWithDraco3d,
+  decodeRawWithDracoJs,
+  decodeRawWithMinidraco,
+  extractPrimitives,
+  getMainThreadDraco3d,
+} from '../lib/raw-bench'
 
-import type { DecoderKind } from '../lib/loaders'
+import type { RawPrimitive } from '../lib/raw-bench'
 
-const MODELS = [
-  { label: 'Canine bundle', url: '/models/canine-bundle.glb' },
-  { label: 'Player bundle', url: '/models/player-bundle.glb' },
-  { label: 'Static bundle', url: '/models/static-bundle.glb' },
+const BUNDLE_MODELS = [
+  { name: 'canine-bundle.glb', url: '/models/canine-bundle.glb' },
+  { name: 'player-bundle.glb', url: '/models/player-bundle.glb' },
+  { name: 'static-bundle.glb', url: '/models/static-bundle.glb' },
 ]
 
-const RUNS = 5
+const LOADER_WARMUP_RUNS = 1
+const LOADER_TIMED_RUNS = 5
+const RAW_WARMUP_RUNS = 3
+const RAW_TIMED_RUNS = 10
 
-interface BenchRow {
-  model: string
-  decoder: DecoderKind
-  medianMs: number
-  runsMs: number[]
-}
+const DECODERS = ['minidraco', 'draco.js', 'draco3d (wasm)'] as const
 
 const median = (values: number[]) => [...values].toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!
 
-const BenchPage = () => {
+// Yield to the event loop so status/table updates paint between sync decodes
+const nextTick = () => new Promise(resolve => setTimeout(resolve, 0))
+
+// How minidraco compares against another decoder's time. Differences within
+// 5% are called even — that's inside run noise.
+const versus = (miniMs: number, otherMs: number) => {
+  const ratio = otherMs / miniMs
+  if (ratio >= 1.05) return `🟢 ${ratio.toFixed(2)}x faster`
+  if (ratio <= 1 / 1.05) return `🔴 ${(1 / ratio).toFixed(2)}x slower`
+  return '⚪ even'
+}
+
+interface BenchModel {
+  name: string
+  url: string
+}
+
+// The sample models are synced into public/models/samples by
+// example/scripts/sync-samples.ts in local dev and never deployed, so the
+// manifest 404s in production and the bench degrades to the bundles.
+const useBenchModels = () => {
+  const [models, setModels] = useState<BenchModel[]>(BUNDLE_MODELS)
+  const [sampleCount, setSampleCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    fetch('/models/samples/manifest.json')
+      .then(response => (response.ok ? response.json() : []))
+      .catch(() => [])
+      .then((files: string[]) => {
+        setSampleCount(files.length)
+        if (files.length === 0) return
+        setModels([...BUNDLE_MODELS, ...files.map(name => ({ name, url: `/models/samples/${name}` }))])
+      })
+  }, [])
+
+  return { models, sampleCount }
+}
+
+const CorpusNote = ({ sampleCount, glbOnly }: { sampleCount: number | null; glbOnly?: boolean }) => (
+  <p className="mb-4 max-w-xl text-sm text-neutral-500">
+    {sampleCount === null
+      ? 'Checking for sample models…'
+      : sampleCount > 0
+        ? `Corpus: 3 bundles + ${sampleCount} draco.js sample models${glbOnly ? ' (GLBs only)' : ''} (local dev only).`
+        : 'Corpus: 3 bundles. Sample models are not deployed — run `bun dev` locally to include them.'}
+  </p>
+)
+
+interface BenchRow {
+  model: string
+  primitives?: number
+  faces?: number
+  medianMs: Record<string, number>
+}
+
+const BenchTable = ({ rows }: { rows: BenchRow[] }) => {
+  if (rows.length === 0) return null
+  const showCounts = rows[0]!.primitives !== undefined
+
+  return (
+    <table className="text-sm">
+      <thead>
+        <tr className="text-left text-neutral-400">
+          <th className="pr-6 pb-2">Model</th>
+          {showCounts && (
+            <>
+              <th className="pr-6 pb-2 text-right">Prims</th>
+              <th className="pr-6 pb-2 text-right">Faces</th>
+            </>
+          )}
+          {DECODERS.map(d => (
+            <th key={d} className="pr-6 pb-2 text-right">
+              {d}
+            </th>
+          ))}
+          <th className="pr-6 pb-2">vs draco.js</th>
+          <th className="pb-2">vs wasm</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(row => (
+          <tr key={row.model} className="border-t border-neutral-800">
+            <td className="py-1 pr-6">{row.model}</td>
+            {showCounts && (
+              <>
+                <td className="pr-6 text-right font-mono">{row.primitives}</td>
+                <td className="pr-6 text-right font-mono">{row.faces!.toLocaleString('en-US')}</td>
+              </>
+            )}
+            {DECODERS.map(d => (
+              <td key={d} className="pr-6 text-right font-mono">
+                {row.medianMs[d]!.toFixed(2)} ms
+              </td>
+            ))}
+            <td className="pr-6 font-mono">{versus(row.medianMs['minidraco']!, row.medianMs['draco.js']!)}</td>
+            <td className="font-mono">{versus(row.medianMs['minidraco']!, row.medianMs['draco3d (wasm)']!)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+const RunButton = ({ running, onClick, label }: { running: boolean; onClick: () => void; label: string }) => (
+  <button
+    className="mb-6 rounded bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
+    onClick={onClick}
+    disabled={running}
+  >
+    {running ? 'Running…' : label}
+  </button>
+)
+
+// --- Raw single-threaded decode benchmark ---
+
+const RawBenchSection = () => {
+  const { models, sampleCount } = useBenchModels()
   const [rows, setRows] = useState<BenchRow[]>([])
   const [running, setRunning] = useState(false)
   const [status, setStatus] = useState('')
 
+  const run = useCallback(async () => {
+    setRunning(true)
+    setRows([])
+    const results: BenchRow[] = []
+
+    try {
+      const draco3d = await getMainThreadDraco3d()
+      const decodeAll: Record<string, (primitives: RawPrimitive[]) => void> = {
+        minidraco: primitives => {
+          for (const p of primitives) decodeRawWithMinidraco(p)
+        },
+        'draco.js': primitives => {
+          for (const p of primitives) decodeRawWithDracoJs(p)
+        },
+        'draco3d (wasm)': primitives => {
+          for (const p of primitives) decodeRawWithDraco3d(draco3d, p)
+        },
+      }
+
+      for (const model of models) {
+        const response = await fetch(model.url)
+        if (!response.ok) throw new Error(`${model.url}: HTTP ${response.status}`)
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        const primitives = extractPrimitives(model.name, bytes)
+
+        let faces = 0
+        for (const p of primitives) faces += decodeRawWithMinidraco(p).numFaces
+
+        const medianMs: Record<string, number> = {}
+        for (const decoder of DECODERS) {
+          setStatus(`${model.name} — ${decoder}…`)
+          await nextTick()
+
+          const decode = decodeAll[decoder]!
+          for (let i = 0; i < RAW_WARMUP_RUNS; i++) decode(primitives)
+          const times: number[] = []
+          for (let i = 0; i < RAW_TIMED_RUNS; i++) {
+            const start = performance.now()
+            decode(primitives)
+            times.push(performance.now() - start)
+          }
+          medianMs[decoder] = median(times)
+        }
+
+        results.push({ model: model.name, primitives: primitives.length, faces, medianMs })
+        setRows([...results])
+      }
+      setStatus('Done')
+    } catch (error) {
+      setStatus(String(error))
+    } finally {
+      setRunning(false)
+    }
+  }, [models])
+
+  return (
+    <section className="mb-12">
+      <h2 className="mb-2 text-lg font-semibold">Raw decode — single-threaded, main thread</h2>
+      <p className="mb-1 max-w-xl text-sm text-neutral-400">
+        The fair comparison: the Draco bitstreams are extracted from each file up front and all three decoders run
+        synchronously on the main thread — no worker pools, no GLTFLoader overhead. Median of {RAW_TIMED_RUNS} runs
+        after {RAW_WARMUP_RUNS} warmups. The page freezes while it runs; that's the point.
+      </p>
+      <CorpusNote sampleCount={sampleCount} />
+      <RunButton running={running} onClick={run} label="Run raw benchmark" />
+      <p className="mb-4 text-sm text-neutral-400">{status}</p>
+      <BenchTable rows={rows} />
+    </section>
+  )
+}
+
+// --- Full GLTFLoader benchmark (real-app wall clock, workers and all) ---
+
+// Loader kind → display/result label
+const LOADER_KINDS = [
+  { kind: 'minidraco', label: 'minidraco' },
+  { kind: 'draco.js', label: 'draco.js' },
+  { kind: 'draco3d', label: 'draco3d (wasm)' },
+] as const
+
+const LoaderBenchSection = () => {
+  const { models, sampleCount } = useBenchModels()
+  const [rows, setRows] = useState<BenchRow[]>([])
+  const [running, setRunning] = useState(false)
+  const [status, setStatus] = useState('')
+
+  const run = useCallback(async () => {
+    setRunning(true)
+    setRows([])
+    const results: BenchRow[] = []
+
+    try {
+      // Raw .drc bitstreams have no glTF container for GLTFLoader to parse
+      for (const model of models.filter(m => m.name.endsWith('.glb'))) {
+        const response = await fetch(model.url)
+        if (!response.ok) throw new Error(`${model.url}: HTTP ${response.status}`)
+        const bytes = await response.arrayBuffer()
+
+        const medianMs: Record<string, number> = {}
+        for (const { kind, label } of LOADER_KINDS) {
+          setStatus(`${model.name} — ${label}…`)
+          const runsMs: number[] = []
+
+          // Warmup + timed runs against long-lived loaders (worker pools and
+          // wasm modules stay warm, as in a real app). A fresh ArrayBuffer
+          // copy per parse defeats the per-buffer decode caches inside the
+          // loaders.
+          const dracoLoader = getDracoLoader(kind)
+          for (let i = 0; i < LOADER_WARMUP_RUNS + LOADER_TIMED_RUNS; i++) {
+            const gltfLoader = new GLTFLoader()
+            gltfLoader.setDRACOLoader(dracoLoader)
+            const start = performance.now()
+            await gltfLoader.parseAsync(bytes.slice(0), '')
+            const elapsed = performance.now() - start
+            if (i >= LOADER_WARMUP_RUNS) runsMs.push(elapsed)
+          }
+
+          medianMs[label] = median(runsMs)
+        }
+
+        results.push({ model: model.name, medianMs })
+        setRows([...results])
+      }
+      setStatus('Done')
+    } catch (error) {
+      setStatus(String(error))
+    } finally {
+      setRunning(false)
+    }
+  }, [models])
+
+  return (
+    <section>
+      <h2 className="mb-2 text-lg font-semibold">GLTFLoader — real-app wall clock</h2>
+      <p className="mb-1 max-w-xl text-sm text-neutral-400">
+        Full GLTFLoader.parse time (median of {LOADER_TIMED_RUNS} runs after warmup) with long-lived loaders. Not an
+        apples-to-apples decoder comparison: minidraco and the wasm decoder parallelize across worker pools while
+        draco.js decodes on the main thread — this measures what an app actually experiences. Includes texture decode
+        and scene-graph setup, which dominates on the texture-heavy sample models.
+      </p>
+      <CorpusNote sampleCount={sampleCount} glbOnly />
+      <RunButton running={running} onClick={run} label="Run loader benchmark" />
+      <p className="mb-4 text-sm text-neutral-400">{status}</p>
+      <BenchTable rows={rows} />
+    </section>
+  )
+}
+
+const BenchPage = () => {
   // Raw-decoder debug handles for scripted pure-decode benchmarks (no GLTF
   // parse overhead) from the devtools console / automated browser checks.
   useEffect(() => {
@@ -47,87 +317,11 @@ const BenchPage = () => {
     }
   }, [])
 
-  const run = useCallback(async () => {
-    setRunning(true)
-    setRows([])
-    const results: BenchRow[] = []
-
-    try {
-      for (const model of MODELS) {
-        const response = await fetch(model.url)
-        const bytes = await response.arrayBuffer()
-
-        for (const decoder of DECODER_KINDS) {
-          setStatus(`${model.label} — ${decoder}…`)
-          const runsMs: number[] = []
-
-          // Warmup + timed runs against long-lived loaders (worker pools and
-          // wasm modules stay warm, as in a real app). A fresh ArrayBuffer
-          // copy per parse defeats the per-buffer decode caches inside the
-          // loaders.
-          const dracoLoader = getDracoLoader(decoder)
-          for (let i = 0; i < RUNS + 1; i++) {
-            const gltfLoader = new GLTFLoader()
-            gltfLoader.setDRACOLoader(dracoLoader)
-            const start = performance.now()
-            await gltfLoader.parseAsync(bytes.slice(0), '')
-            const elapsed = performance.now() - start
-            if (i > 0) runsMs.push(elapsed)
-          }
-
-          results.push({ model: model.label, decoder, medianMs: median(runsMs), runsMs })
-          setRows([...results])
-        }
-      }
-      setStatus('Done')
-    } catch (error) {
-      setStatus(String(error))
-    } finally {
-      setRunning(false)
-    }
-  }, [])
-
   return (
     <div className="min-h-full bg-neutral-900 p-8 text-white">
-      <h1 className="mb-2 text-xl font-semibold">minidraco in-browser benchmark</h1>
-      <p className="mb-4 max-w-xl text-sm text-neutral-400">
-        Full GLTFLoader.parse time (median of {RUNS} runs after warmup) for each Draco decoder backend, with long-lived
-        loaders (warm worker pools). minidraco and the wasm decoder run in worker pools; draco.js decodes on the main
-        thread.
-      </p>
-
-      <button
-        className="mb-6 rounded bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
-        onClick={run}
-        disabled={running}
-      >
-        {running ? 'Running…' : 'Run benchmark'}
-      </button>
-
-      <p className="mb-4 text-sm text-neutral-400">{status}</p>
-
-      {rows.length > 0 && (
-        <table className="text-sm">
-          <thead>
-            <tr className="text-left text-neutral-400">
-              <th className="pr-6 pb-2">Model</th>
-              <th className="pr-6 pb-2">Decoder</th>
-              <th className="pr-6 pb-2">Median</th>
-              <th className="pb-2">Runs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(row => (
-              <tr key={`${row.model}:${row.decoder}`} className="border-t border-neutral-800">
-                <td className="py-1 pr-6">{row.model}</td>
-                <td className="pr-6 font-mono">{row.decoder}</td>
-                <td className="pr-6 font-mono">{row.medianMs.toFixed(1)} ms</td>
-                <td className="font-mono text-neutral-400">{row.runsMs.map(ms => ms.toFixed(0)).join(' / ')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <h1 className="mb-8 text-xl font-semibold">minidraco in-browser benchmark</h1>
+      <RawBenchSection />
+      <LoaderBenchSection />
     </div>
   )
 }

@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "portless minidraco next dev",
+    "dev": "bun scripts/sync-samples.ts && portless minidraco next dev",
+    "sync-samples": "bun scripts/sync-samples.ts",
     "build": "next build",
     "start": "serve out",
     "typecheck": "tsc --noEmit"

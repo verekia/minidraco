@@ -43,3 +43,7 @@ example/public/ab
 
 # playwright artifacts
 .playwright-mcp
+
+# draco.js sample models for the /bench raw-decode benchmark, synced from the
+# installed dependency by example/scripts/sync-samples.ts (local dev only)
+example/public/models/samples
