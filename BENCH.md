@@ -18,26 +18,25 @@ Raw decode via `bun run bench`, median of 10 runs after 3 warmups.
 
 | file                              | prims |   faces | minidraco |  draco.js | draco3d (wasm) | minidraco vs draco.js | minidraco vs wasm |
 | --------------------------------- | ----: | ------: | --------: | --------: | -------------: | --------------------- | ----------------- |
-| `canine-bundle.glb`               |     1 |     532 |   0.70 ms |   0.86 ms |        0.74 ms | 🟢 1.23x faster       | 🟢 1.07x faster   |
-| `player-bundle.glb`               |     7 |   2,544 |   2.07 ms |   2.23 ms |        1.36 ms | 🟢 1.08x faster       | 🔴 1.53x slower   |
-| `static-bundle.glb`               |   488 | 220,879 |  48.22 ms |  51.45 ms |       49.99 ms | 🟢 1.07x faster       | ⚪ even           |
-| `IridescentDishWithOlives.glb`    |     4 |  24,448 |   3.86 ms |   3.76 ms |        4.46 ms | ⚪ even               | 🟢 1.16x faster   |
-| `LittlestTokyo.glb`               |    71 | 141,802 |  70.93 ms |  76.14 ms |       76.46 ms | 🟢 1.07x faster       | 🟢 1.08x faster   |
-| `ShaderBall2.glb`                 |     3 |  13,388 |   4.15 ms |   4.66 ms |        4.96 ms | 🟢 1.12x faster       | 🟢 1.19x faster   |
-| `bath_day.glb`                    |    22 |  32,158 |   5.48 ms |   5.99 ms |        5.56 ms | 🟢 1.09x faster       | ⚪ even           |
-| `duck.glb`                        |     1 |   4,212 |   0.78 ms |   0.87 ms |        1.11 ms | 🟢 1.11x faster       | 🟢 1.42x faster   |
-| `ferrari.glb`                     |    51 | 358,788 |  61.59 ms |  62.16 ms |       76.20 ms | ⚪ even               | 🟢 1.24x faster   |
-| `forest_house.glb`                |    12 |  10,956 |   2.59 ms |   2.85 ms |        2.74 ms | 🟢 1.10x faster       | 🟢 1.06x faster   |
-| `gears.glb`                       |     3 |  21,696 |   2.95 ms |   3.05 ms |        3.44 ms | ⚪ even               | 🟢 1.17x faster   |
-| `kira.glb`                        |    43 |  51,601 |   9.32 ms |   9.25 ms |       11.16 ms | ⚪ even               | 🟢 1.20x faster   |
-| `minimalistic_modern_bedroom.glb` |     4 |  10,457 |   2.69 ms |   2.71 ms |        2.99 ms | ⚪ even               | 🟢 1.11x faster   |
-| `nemetona.glb`                    |     1 | 320,352 | 128.36 ms | 137.70 ms |      140.29 ms | 🟢 1.07x faster       | 🟢 1.09x faster   |
-| `pool.glb`                        |     2 |  22,280 |   4.85 ms |   5.47 ms |        3.98 ms | 🟢 1.13x faster       | 🔴 1.22x slower   |
-| `rolex.glb`                       |    24 | 120,336 |  37.32 ms |  37.11 ms |       41.25 ms | ⚪ even               | 🟢 1.11x faster   |
-| `venice_mask.glb`                 |     5 | 295,600 |  74.08 ms |  78.97 ms |       80.19 ms | 🟢 1.07x faster       | 🟢 1.08x faster   |
-| `bunny.drc`                       |     1 |  69,451 |   7.93 ms |   8.44 ms |        4.11 ms | 🟢 1.06x faster       | 🔴 1.93x slower   |
-| `car.drc`                         |     1 |   1,744 |   0.07 ms |   2.85 ms |        0.13 ms | 🟢 38.01x faster      | 🟢 1.71x faster   |
-| `duck.drc`                        |     1 |   4,212 |   1.04 ms |   1.07 ms |        1.08 ms | ⚪ even               | ⚪ even           |
+| `manablade-characters.glb`        |     7 |   2,544 |   1.89 ms |   2.31 ms |        3.08 ms | 🟢 1.22x faster       | 🟢 1.63x faster   |
+| `manablade-static.glb`            |   488 | 220,879 |  47.89 ms |  51.03 ms |       50.21 ms | 🟢 1.07x faster       | ⚪ even           |
+| `IridescentDishWithOlives.glb`    |     4 |  24,448 |   3.74 ms |   3.66 ms |        4.53 ms | ⚪ even               | 🟢 1.21x faster   |
+| `LittlestTokyo.glb`               |    71 | 141,802 |  69.91 ms |  74.47 ms |       76.19 ms | 🟢 1.07x faster       | 🟢 1.09x faster   |
+| `ShaderBall2.glb`                 |     3 |  13,388 |   4.17 ms |   4.45 ms |        5.10 ms | 🟢 1.07x faster       | 🟢 1.22x faster   |
+| `bath_day.glb`                    |    22 |  32,158 |   5.99 ms |   5.99 ms |        5.81 ms | ⚪ even               | ⚪ even           |
+| `duck.glb`                        |     1 |   4,212 |   0.80 ms |   0.90 ms |        1.08 ms | 🟢 1.12x faster       | 🟢 1.35x faster   |
+| `ferrari.glb`                     |    51 | 358,788 |  61.34 ms |  62.04 ms |       77.00 ms | ⚪ even               | 🟢 1.26x faster   |
+| `forest_house.glb`                |    12 |  10,956 |   2.48 ms |   2.60 ms |        2.77 ms | ⚪ even               | 🟢 1.12x faster   |
+| `gears.glb`                       |     3 |  21,696 |   2.95 ms |   2.98 ms |        3.35 ms | ⚪ even               | 🟢 1.13x faster   |
+| `kira.glb`                        |    43 |  51,601 |   9.51 ms |   9.39 ms |       11.26 ms | ⚪ even               | 🟢 1.18x faster   |
+| `minimalistic_modern_bedroom.glb` |     4 |  10,457 |   2.57 ms |   2.61 ms |        3.20 ms | ⚪ even               | 🟢 1.25x faster   |
+| `nemetona.glb`                    |     1 | 320,352 | 128.99 ms | 133.70 ms |      139.53 ms | ⚪ even               | 🟢 1.08x faster   |
+| `pool.glb`                        |     2 |  22,280 |   5.00 ms |   5.02 ms |        4.02 ms | ⚪ even               | 🔴 1.24x slower   |
+| `rolex.glb`                       |    24 | 120,336 |  35.70 ms |  37.61 ms |       40.78 ms | 🟢 1.05x faster       | 🟢 1.14x faster   |
+| `venice_mask.glb`                 |     5 | 295,600 |  75.99 ms |  77.39 ms |       80.40 ms | ⚪ even               | 🟢 1.06x faster   |
+| `bunny.drc`                       |     1 |  69,451 |   7.94 ms |   8.68 ms |        4.24 ms | 🟢 1.09x faster       | 🔴 1.87x slower   |
+| `car.drc`                         |     1 |   1,744 |   0.06 ms |   2.98 ms |        0.13 ms | 🟢 46.64x faster      | 🟢 2.06x faster   |
+| `duck.drc`                        |     1 |   4,212 |   1.14 ms |   1.14 ms |        1.16 ms | ⚪ even               | ⚪ even           |
 
 ## Browser — single-threaded raw decode (V8)
 
@@ -49,9 +48,8 @@ overhead. Median of 10 runs after 3 warmups, saved from the example's `/bench` p
 
 | file                              | prims |   faces | minidraco |  draco.js | draco3d (wasm) | minidraco vs draco.js | minidraco vs wasm |
 | --------------------------------- | ----: | ------: | --------: | --------: | -------------: | --------------------- | ----------------- |
-| `canine-bundle.glb`               |     1 |     532 |   0.50 ms |   0.60 ms |        0.40 ms | 🟢 1.20x faster       | 🔴 1.25x slower   |
-| `player-bundle.glb`               |     7 |   2,544 |   2.10 ms |   2.20 ms |        2.00 ms | ⚪ even               | 🔴 1.05x slower   |
-| `static-bundle.glb`               |   488 | 220,879 |  63.40 ms |  64.90 ms |       83.00 ms | ⚪ even               | 🟢 1.31x faster   |
+| `manablade-characters.glb`        |     7 |   2,544 |   2.10 ms |   2.20 ms |        2.00 ms | ⚪ even               | 🔴 1.05x slower   |
+| `manablade-static.glb`            |   488 | 220,879 |  63.40 ms |  64.90 ms |       83.00 ms | ⚪ even               | 🟢 1.31x faster   |
 | `IridescentDishWithOlives.glb`    |     4 |  24,448 |   8.10 ms |   5.60 ms |        8.00 ms | 🔴 1.45x slower       | ⚪ even           |
 | `LittlestTokyo.glb`               |    71 | 141,802 |  90.70 ms |  92.90 ms |      136.90 ms | ⚪ even               | 🟢 1.51x faster   |
 | `ShaderBall2.glb`                 |     3 |  13,388 |   5.50 ms |   5.70 ms |        9.30 ms | ⚪ even               | 🟢 1.69x faster   |
@@ -83,9 +81,8 @@ texture decode and scene-graph setup. Median of 5 runs after 1 warmup, GLBs only
 
 | file                              | minidraco |  draco.js | draco3d (wasm) | minidraco vs draco.js | minidraco vs wasm |
 | --------------------------------- | --------: | --------: | -------------: | --------------------- | ----------------- |
-| `canine-bundle.glb`               |   7.40 ms |   4.60 ms |       12.10 ms | 🔴 1.61x slower       | 🟢 1.64x faster   |
-| `player-bundle.glb`               |  11.40 ms |   9.90 ms |        7.50 ms | 🔴 1.15x slower       | 🔴 1.52x slower   |
-| `static-bundle.glb`               |  56.60 ms |  93.60 ms |       51.30 ms | 🟢 1.65x faster       | 🔴 1.10x slower   |
+| `manablade-characters.glb`        |  11.40 ms |   9.90 ms |        7.50 ms | 🔴 1.15x slower       | 🔴 1.52x slower   |
+| `manablade-static.glb`            |  56.60 ms |  93.60 ms |       51.30 ms | 🟢 1.65x faster       | 🔴 1.10x slower   |
 | `IridescentDishWithOlives.glb`    |  63.00 ms |  72.20 ms |       58.80 ms | 🟢 1.15x faster       | 🔴 1.07x slower   |
 | `LittlestTokyo.glb`               |  89.80 ms | 182.00 ms |       92.20 ms | 🟢 2.03x faster       | ⚪ even           |
 | `ShaderBall2.glb`                 |  16.30 ms |  20.10 ms |       13.60 ms | 🟢 1.23x faster       | 🔴 1.20x slower   |

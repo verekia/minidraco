@@ -7,17 +7,7 @@
     "timedRuns": 10,
     "results": [
       {
-        "file": "canine-bundle.glb",
-        "primitives": 1,
-        "faces": 532,
-        "medianMs": {
-          "minidraco": 0.5,
-          "draco.js": 0.6,
-          "draco3d (wasm)": 0.4
-        }
-      },
-      {
-        "file": "player-bundle.glb",
+        "file": "manablade-characters.glb",
         "primitives": 7,
         "faces": 2544,
         "medianMs": {
@@ -27,7 +17,7 @@
         }
       },
       {
-        "file": "static-bundle.glb",
+        "file": "manablade-static.glb",
         "primitives": 488,
         "faces": 220879,
         "medianMs": {
@@ -216,15 +206,7 @@
     "timedRuns": 5,
     "results": [
       {
-        "file": "canine-bundle.glb",
-        "medianMs": {
-          "minidraco": 7.4,
-          "draco.js": 4.6,
-          "draco3d (wasm)": 12.1
-        }
-      },
-      {
-        "file": "player-bundle.glb",
+        "file": "manablade-characters.glb",
         "medianMs": {
           "minidraco": 11.4,
           "draco.js": 9.9,
@@ -232,7 +214,7 @@
         }
       },
       {
-        "file": "static-bundle.glb",
+        "file": "manablade-static.glb",
         "medianMs": {
           "minidraco": 56.6,
           "draco.js": 93.6,

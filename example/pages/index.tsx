@@ -12,9 +12,8 @@ import type { Group, PerspectiveCamera } from 'three'
 import type { DecoderKind } from '../lib/loaders'
 
 const MODELS = [
-  { label: 'Canine bundle', url: '/models/canine-bundle.glb' },
-  { label: 'Player bundle', url: '/models/player-bundle.glb' },
-  { label: 'Static bundle', url: '/models/static-bundle.glb' },
+  { label: 'Manablade characters', url: '/models/manablade-characters.glb' },
+  { label: 'Manablade static', url: '/models/manablade-static.glb' },
 ]
 
 const ALL_MESHES = '__all__'

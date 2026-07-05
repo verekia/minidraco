@@ -73,7 +73,7 @@ for (const glbPath of [...BUNDLE_GLBS, ...SAMPLE_GLBS]) {
       expect(primitives.length).toBeGreaterThan(0)
     })
 
-    // static-bundle has 488 primitives — testing each one individually would
+    // manablade-static has 488 primitives — testing each one individually would
     // spam the reporter, so batch per file but report precise labels on failure.
     test(`all ${primitives.length} primitives match draco3d output`, async () => {
       for (const primitive of primitives) {

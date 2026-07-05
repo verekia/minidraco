@@ -18,9 +18,8 @@ import {
 import type { RawPrimitive } from '../lib/raw-bench'
 
 const BUNDLE_MODELS = [
-  { name: 'canine-bundle.glb', url: '/models/canine-bundle.glb' },
-  { name: 'player-bundle.glb', url: '/models/player-bundle.glb' },
-  { name: 'static-bundle.glb', url: '/models/static-bundle.glb' },
+  { name: 'manablade-characters.glb', url: '/models/manablade-characters.glb' },
+  { name: 'manablade-static.glb', url: '/models/manablade-static.glb' },
 ]
 
 const LOADER_WARMUP_RUNS = 1

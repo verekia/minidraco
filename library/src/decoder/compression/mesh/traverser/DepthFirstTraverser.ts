@@ -64,7 +64,7 @@ class DepthFirstTraverser {
   // Scratch buffers are set up here rather than in init() so a shared-traversal
   // -cache hit — where generateSequence returns before any traversal — skips
   // this entirely, including the visited-flag zero-fill (worth ~0.5% on the
-  // 488-primitive static bundle, which shares attribute corner tables across
+  // 488-primitive manablade-static bundle, which shares attribute corner tables across
   // primitives). Uint8Array (0/1) instead of Array(bool): these flags are read
   // and written on every corner of the hottest decode loop (traverseFromCorner).
   // Decode-scoped scratch: released in bulk at the end of the decode.
