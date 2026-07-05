@@ -77,10 +77,16 @@ class Decoder {
       return { ok: false, message: 'Input is not a mesh.' }
     }
 
-    const decoder = createMeshDecoder(result.header.encoderMethod)
     try {
+      const decoder = createMeshDecoder(result.header.encoderMethod)
       const status = decoder.decodeMesh(this.options_, inBuffer, outGeometry)
       return { ok: status.ok(), message: status.errorMsg }
+    } catch (error) {
+      // Safety net for hostile input: a malformed header can declare a size
+      // that drives an oversized typed-array allocation (RangeError), or hit an
+      // unsupported encoding — convert any throw into a clean decode failure
+      // instead of letting it escape as an uncaught exception.
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
     } finally {
       // The result mesh only references attribute buffers and faces_, never
       // scratch — everything borrowed during the decode goes back to the pool.
