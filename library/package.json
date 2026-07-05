@@ -15,6 +15,10 @@
     "./three": {
       "types": "./dist/three.d.ts",
       "import": "./dist/three.js"
+    },
+    "./three/single": {
+      "types": "./dist/three-single.d.ts",
+      "import": "./dist/three-single.js"
     }
   },
   "scripts": {
