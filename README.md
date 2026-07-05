@@ -60,10 +60,11 @@ to fetch and compile before the first decode, so the first model on screen appea
 
 ## Download size
 
-Over the wire (brotli): **minidraco ~45 KB** with the worker pool (~23 KB in your bundle + a ~22 KB
-worker chunk fetched on first decode), or **~23 KB** via `minidraco/three/single`, which drops the
-worker chunk. **draco.js ~22 KB**, **draco3d wasm ~76 KB** — and the wasm is a separate file you
-must host, while the JS decoders ship inside your bundle.
+Over the wire (brotli): **~23 KB** ships in your app bundle. With the worker pool on (default) the
+browser also fetches a **~22 KB** worker chunk on the first decode — **~45 KB** total. `workers: false`
+skips that fetch at runtime; `minidraco/three/single` additionally keeps the chunk out of your build,
+so it's never deployed or precached. **draco.js ~22 KB**, **draco3d wasm ~76 KB** — the wasm is a
+separate file you must host, while the JS decoders ship inside your bundle.
 
 ## Monorepo
 
