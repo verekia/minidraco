@@ -1,4 +1,4 @@
-# minidraco
+# 🐲 minidraco
 
 A fast, pure-TypeScript [Draco](https://google.github.io/draco/) mesh decoder with a drop-in
 `DRACOLoader` for [Three.js](https://threejs.org/) — no wasm to host or fetch, and a worker pool
