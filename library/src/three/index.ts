@@ -4,21 +4,57 @@
 // to GLTFLoader.setDRACOLoader() with no cast, on any three version.
 //
 // By default decoding runs in a pool of module workers (parallel across
-// primitives, main thread stays free), with a transparent main-thread fallback
+// primitives, main thread stays free), with a transparent synchronous fallback
 // when workers are unavailable (SSR, worker bundling unsupported). Pass
-// `{ workers: false }` (or setWorkers(false) / setWorkerLimit(0)) to decode on
-// the main thread instead. Apps that ONLY ever decode single-threaded should
-// import `minidraco/three/single`, which drops the worker code entirely so the
-// bundler never emits the worker chunk.
-import { BufferAttribute, BufferGeometry } from 'three'
+// `{ workers: false }` (or setWorkers(false) / setWorkerLimit(0)) to decode
+// synchronously on the main thread instead.
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  ColorManagement,
+  FileLoader,
+  LinearSRGBColorSpace,
+  Loader,
+  SRGBColorSpace,
+} from 'three'
 
-import { MiniDRACOLoader as MiniDRACOLoaderBase } from './loader-base'
+// Import shared decoder symbols via the public entry (not deep decoder
+// paths): it keeps the dts build free of hashed shared-type chunks — three.d.ts
+// simply imports from index.d.ts.
+import { decodeDracoMesh, GeometryAttributeType } from '../index'
 
 import type { LoadingManager } from 'three'
 
-import type { MiniDRACOLoaderOptions, TaskConfig } from './loader-base'
+import type { Mesh, PointAttribute } from '../index'
 
-export type { AttributeIDs, AttributeTypes, MiniDRACOLoaderOptions } from './loader-base'
+export type AttributeIDs = Record<string, number | string>
+export type AttributeTypes = Record<string, string>
+
+export interface MiniDRACOLoaderOptions {
+  // three.js LoadingManager, as with any loader.
+  manager?: LoadingManager
+  // false → decode synchronously on the main thread (no worker pool).
+  // Default true. Equivalent to workerLimit: 0 / setWorkers(false).
+  workers?: boolean
+  // Worker pool size when workers are enabled (default 4).
+  workerLimit?: number
+  // See the syncByteThreshold field (default 0 = always use the pool).
+  syncByteThreshold?: number
+}
+
+// LoadingManager instances expose itemStart(); an options bag does not. Lets
+// the constructor keep the three-compatible `new Loader(manager)` form while
+// also accepting `new MiniDRACOLoader({ workers: false })`.
+const isLoadingManager = (value: unknown): value is LoadingManager =>
+  typeof (value as { itemStart?: unknown } | null | undefined)?.itemStart === 'function'
+
+interface TaskConfig {
+  attributeIDs: AttributeIDs
+  attributeTypes: AttributeTypes
+  useUniqueIDs: boolean
+  vertexColorSpace: string
+}
 
 interface RawAttribute {
   name: string
@@ -44,7 +80,47 @@ interface QueuedTask {
   reject: (error: unknown) => void
 }
 
-class MiniDRACOLoader extends MiniDRACOLoaderBase {
+type TypedArrayConstructor =
+  | Float32ArrayConstructor
+  | Int8ArrayConstructor
+  | Int16ArrayConstructor
+  | Int32ArrayConstructor
+  | Uint8ArrayConstructor
+  | Uint16ArrayConstructor
+  | Uint32ArrayConstructor
+
+const _taskCache = new WeakMap<ArrayBuffer, { key: string; promise: Promise<BufferGeometry> }>()
+
+const _attributeTypeMap: Record<string, number> = {
+  POSITION: GeometryAttributeType.POSITION,
+  NORMAL: GeometryAttributeType.NORMAL,
+  COLOR: GeometryAttributeType.COLOR,
+  TEX_COORD: GeometryAttributeType.TEX_COORD,
+  GENERIC: GeometryAttributeType.GENERIC,
+}
+
+const _typedArrayMap: Record<string, TypedArrayConstructor> = {
+  Float32Array,
+  Int8Array,
+  Int16Array,
+  Int32Array,
+  Uint8Array,
+  Uint16Array,
+  Uint32Array,
+}
+
+class MiniDRACOLoader extends Loader<BufferGeometry> {
+  defaultAttributeIDs: AttributeIDs
+  defaultAttributeTypes: AttributeTypes
+  workerLimit: number
+  // Opt-in (0 = disabled): buffers at or below this size decode synchronously
+  // on the main thread instead of paying the ~0.5 ms worker message roundtrip.
+  // Worth enabling (e.g. 4096) when the main thread is otherwise idle during
+  // loads — in a full GLTFLoader parse the main thread is already busy
+  // building geometries, and measurements show the pool wins there even for
+  // tiny primitives.
+  syncByteThreshold: number
+
   _workers: WorkerEntry[]
   _taskId: number
   _tasks: Map<number, { resolve: (raw: RawGeometry) => void; reject: (error: unknown) => void; entry: WorkerEntry }>
@@ -60,8 +136,29 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
   // origin (created lazily, revoked on dispose).
   _workerBlobUrl: string | null
 
+  // Accepts either a LoadingManager (three-compatible form) or an options bag.
   constructor(managerOrOptions?: LoadingManager | MiniDRACOLoaderOptions) {
-    super(managerOrOptions)
+    const options: MiniDRACOLoaderOptions = isLoadingManager(managerOrOptions)
+      ? { manager: managerOrOptions }
+      : (managerOrOptions ?? {})
+    super(options.manager)
+
+    this.defaultAttributeIDs = {
+      position: 'POSITION',
+      normal: 'NORMAL',
+      color: 'COLOR',
+      uv: 'TEX_COORD',
+    }
+
+    this.defaultAttributeTypes = {
+      position: 'Float32Array',
+      normal: 'Float32Array',
+      color: 'Float32Array',
+      uv: 'Float32Array',
+    }
+
+    this.workerLimit = options.workers === false ? 0 : (options.workerLimit ?? 4)
+    this.syncByteThreshold = options.syncByteThreshold ?? 0
     this._workers = []
     this._taskId = 0
     this._tasks = new Map()
@@ -81,8 +178,27 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
     return this
   }
 
-  // Toggle the worker pool on/off. false decodes on the main thread; true
-  // enables the pool, keeping the current size or falling back to
+  // No-ops kept for API compatibility with THREE.DRACOLoader — minidraco has
+  // no external decoder files to configure. The params are `unknown` (not
+  // `string`/`object`) so the signatures stay assignable to THREE.DRACOLoader
+  // across three versions, whose setDecoderPath has grown to accept a
+  // `string | DecoderPaths` — letting `new MiniDRACOLoader()` be passed to
+  // GLTFLoader.setDRACOLoader() with no cast.
+  setDecoderPath(_path?: unknown): this {
+    return this
+  }
+
+  setDecoderConfig(_config?: unknown): this {
+    return this
+  }
+
+  setWorkerLimit(limit: number): this {
+    this.workerLimit = limit
+    return this
+  }
+
+  // Toggle the worker pool on/off. false decodes synchronously on the main
+  // thread; true enables the pool, keeping the current size or falling back to
   // the default 4 if it was disabled. For a specific pool size use
   // setWorkerLimit(n).
   setWorkers(enabled: boolean): this {
@@ -90,7 +206,7 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
     return this
   }
 
-  override preload(): this {
+  preload(): this {
     // Spawn the whole pool, not just one worker: each fresh worker runs a
     // short JIT warmup at startup (see worker.ts), so spawning them all here
     // lets that overlap the model download instead of the first decode burst.
@@ -102,7 +218,7 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
     return this
   }
 
-  override dispose(): this {
+  dispose(): this {
     for (const entry of this._workers) entry.worker.terminate()
     this._workers = []
     // Settle everything still outstanding so no caller promise hangs after
@@ -126,7 +242,75 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
     return this
   }
 
-  override async _runTask(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<BufferGeometry> {
+  override load(
+    url: string,
+    onLoad: (geometry: BufferGeometry) => void,
+    onProgress?: (event: ProgressEvent) => void,
+    onError?: (err: unknown) => void,
+  ): void {
+    const loader = new FileLoader(this.manager)
+
+    loader.setPath(this.path)
+    loader.setResponseType('arraybuffer')
+    loader.setRequestHeader(this.requestHeader)
+    loader.setWithCredentials(this.withCredentials)
+
+    loader.load(
+      url,
+      buffer => {
+        this.parse(buffer as ArrayBuffer, onLoad, onError)
+      },
+      onProgress,
+      onError,
+    )
+  }
+
+  parse(
+    buffer: ArrayBuffer,
+    onLoad: (geometry: BufferGeometry) => void,
+    onError: (err: unknown) => void = () => {},
+  ): void {
+    this.decodeDracoFile(buffer, onLoad, null, null, SRGBColorSpace, onError).catch(onError)
+  }
+
+  decodeDracoFile(
+    buffer: ArrayBuffer,
+    callback?: (geometry: BufferGeometry) => void,
+    attributeIDs?: AttributeIDs | null,
+    attributeTypes?: AttributeTypes | null,
+    vertexColorSpace: string = LinearSRGBColorSpace,
+    onError: (err: unknown) => void = () => {},
+  ): Promise<BufferGeometry | void> {
+    const taskConfig: TaskConfig = {
+      attributeIDs: attributeIDs || this.defaultAttributeIDs,
+      attributeTypes: attributeTypes || this.defaultAttributeTypes,
+      useUniqueIDs: !!attributeIDs,
+      vertexColorSpace,
+    }
+
+    return this.decodeGeometry(buffer, taskConfig).then(callback).catch(onError)
+  }
+
+  decodeGeometry(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<BufferGeometry> {
+    const taskKey = JSON.stringify(taskConfig)
+
+    if (_taskCache.has(buffer)) {
+      const cachedTask = _taskCache.get(buffer)!
+      if (cachedTask.key === taskKey) {
+        return cachedTask.promise
+      }
+      // Same buffer, different settings: fall through and re-decode. (The input
+      // is copied to the worker, never transferred, so it's still intact.)
+    }
+
+    const geometryPending = this._runTask(buffer, taskConfig)
+
+    _taskCache.set(buffer, { key: taskKey, promise: geometryPending })
+
+    return geometryPending
+  }
+
+  async _runTask(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<BufferGeometry> {
     if (this._workersAvailable()) {
       if (buffer.byteLength > this.syncByteThreshold) {
         try {
@@ -134,14 +318,14 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
           return this._buildGeometryFromRaw(raw, taskConfig)
         } catch (error) {
           // Decode errors (malformed data) carry `isDecodeError`; anything else
-          // is worker infrastructure failing — fall back to the main thread.
+          // is worker infrastructure failing — fall back to the sync path.
           if ((error as { isDecodeError?: boolean })?.isDecodeError) throw error
           this._workersBroken = true
         }
       } else {
         // Tiny buffer: decode on the main thread, but yield one microtask
         // first so a caller looping over many primitives finishes posting the
-        // large ones to the workers before we start doing main-thread work.
+        // large ones to the workers before we start doing sync work.
         await Promise.resolve()
       }
     }
@@ -173,7 +357,7 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
         // that imports the CDN URL instead (the import is a CORS request, so
         // the CDN must send Access-Control-Allow-Origin — as it already must
         // for fonts/models). If that import fails, the worker's error event
-        // trips the main-thread fallback below.
+        // trips the sync fallback below.
         try {
           if (this._workerBlobUrl === null) {
             const bootstrap = `import ${JSON.stringify(String(workerUrl))};`
@@ -250,7 +434,7 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
     }
     if (this._workersBroken || this._workers.length === 0) {
       // The pool broke (possibly between queueing and this flush) or spawning
-      // failed; _runTask falls back to the main-thread path per task.
+      // failed; _runTask falls back to the synchronous path per task.
       const error = new Error('MiniDRACOLoader: worker unavailable')
       for (const task of batch) task.reject(error)
       return
@@ -309,6 +493,87 @@ class MiniDRACOLoader extends MiniDRACOLoaderBase {
     geometry.setIndex(new BufferAttribute(raw.indices, 1))
     return geometry
   }
+
+  // Synchronous main-thread decode (worker fallback and DracoJs-style reuse).
+  _decodeBuffer(buffer: ArrayBuffer, taskConfig: TaskConfig): BufferGeometry {
+    const mesh = decodeDracoMesh(new Uint8Array(buffer))
+    return this._buildGeometry(mesh, taskConfig)
+  }
+
+  _buildGeometry(dracoGeometry: Mesh, taskConfig: TaskConfig): BufferGeometry {
+    const attributeIDs = taskConfig.attributeIDs
+    const attributeTypes = taskConfig.attributeTypes
+
+    const geometry = new BufferGeometry()
+    const numPoints = dracoGeometry.numPoints()
+
+    for (const attributeName in attributeIDs) {
+      const OutputTypedArray = _typedArrayMap[attributeTypes[attributeName]]
+      if (!OutputTypedArray) continue
+
+      let attribute: PointAttribute | null
+
+      if (taskConfig.useUniqueIDs) {
+        const uniqueId = attributeIDs[attributeName] as number
+        attribute = dracoGeometry.getAttributeByUniqueId(uniqueId)
+      } else {
+        const typeEnum = _attributeTypeMap[attributeIDs[attributeName] as string]
+        if (typeEnum === undefined) continue
+        attribute = dracoGeometry.getNamedAttribute(typeEnum)
+      }
+
+      if (!attribute) continue
+
+      const itemSize = attribute.numComponents
+      const array = attribute.extractTo(OutputTypedArray, numPoints)
+
+      const bufferAttribute = new BufferAttribute(array, itemSize)
+
+      if (attributeName === 'color') {
+        this._assignVertexColorSpace(bufferAttribute, taskConfig.vertexColorSpace)
+        bufferAttribute.normalized = !(array instanceof Float32Array)
+      }
+
+      geometry.setAttribute(attributeName, bufferAttribute)
+    }
+
+    const numFaces = dracoGeometry.numFaces()
+    const index = new Uint32Array(numFaces * 3)
+    index.set(dracoGeometry.faces_.subarray(0, numFaces * 3))
+
+    geometry.setIndex(new BufferAttribute(index, 1))
+
+    return geometry
+  }
+
+  _assignVertexColorSpace(attribute: BufferAttribute, inputColorSpace: string): void {
+    if (inputColorSpace !== SRGBColorSpace) return
+
+    const _color = new Color()
+
+    for (let i = 0, il = attribute.count; i < il; i++) {
+      _color.fromBufferAttribute(attribute, i)
+      ColorManagement.colorSpaceToWorking(_color, SRGBColorSpace)
+      attribute.setXYZ(i, _color.r, _color.g, _color.b)
+    }
+  }
 }
 
 export { MiniDRACOLoader, MiniDRACOLoader as DRACOLoader }
+
+// --- Compile-time guard: MiniDRACOLoader must stay assignable to a
+// THREE.DRACOLoader-shaped type so it can be passed to
+// GLTFLoader.setDRACOLoader() with no cast on any three version. Newer three
+// types setDecoderPath as `string | DecoderPaths`, so the no-op setters must
+// accept a widened param (see setDecoderPath/setDecoderConfig above). This is
+// purely type-level — it emits no runtime code. If the surface regresses,
+// `_LoaderAssignabilityGuard` resolves to a non-`true` type and errors here.
+type _DracoLoaderShape = {
+  setDecoderPath(path: string | Record<string, string>): unknown
+  setDecoderConfig(config: object): unknown
+  setWorkerLimit(limit: number): unknown
+  preload(): unknown
+  dispose(): unknown
+}
+type _Expect<T extends true> = T
+type _LoaderAssignabilityGuard = _Expect<MiniDRACOLoader extends _DracoLoaderShape ? true : false>

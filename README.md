@@ -23,9 +23,6 @@ new MiniDRACOLoader({ workers: false }) // decode on the main thread
 new MiniDRACOLoader({ workerLimit: 8 }) // pool size (default 4)
 ```
 
-If you _only_ ever decode on the main thread, import from `minidraco/three/single` instead — same
-API, but with no worker code so the bundler never emits the worker chunk.
-
 Or decode a raw bitstream without Three.js:
 
 ```ts
@@ -61,10 +58,9 @@ to fetch and compile before the first decode, so the first model on screen appea
 ## Download size
 
 Over the wire (brotli): **~23 KB** ships in your app bundle. With the worker pool on (default) the
-browser also fetches a **~22 KB** worker chunk on the first decode — **~45 KB** total. `workers: false`
-skips that fetch at runtime; `minidraco/three/single` additionally keeps the chunk out of your build,
-so it's never deployed or precached. **draco.js ~22 KB**, **draco3d wasm ~76 KB** — the wasm is a
-separate file you must host, while the JS decoders ship inside your bundle.
+browser also fetches a **~22 KB** worker chunk on the first decode — **~45 KB** total; `workers: false`
+skips that fetch. **draco.js ~22 KB**, **draco3d wasm ~76 KB** — the wasm is a separate file you
+must host, while the JS decoders ship inside your bundle.
 
 ## Monorepo
 

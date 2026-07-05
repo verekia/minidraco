@@ -16,17 +16,8 @@ export default defineConfig([
     splitting: false,
   },
   {
-    // `minidraco/three` — the DRACOLoader drop-in (worker pool) built on the core.
+    // `minidraco/three` — the DRACOLoader drop-in built on top of the core.
     entry: { three: 'src/three/index.ts' },
-    format: ['esm'],
-    dts: true,
-    splitting: false,
-  },
-  {
-    // `minidraco/three/single` — single-threaded-only drop-in. Built on its own
-    // (self-contained dts) and with no reference to the worker, so bundlers
-    // never emit the worker chunk for consumers that import it.
-    entry: { 'three-single': 'src/three/single.ts' },
     format: ['esm'],
     dts: true,
     splitting: false,
