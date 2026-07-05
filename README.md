@@ -53,13 +53,17 @@ Median across a 19-model corpus vs [draco.js](https://github.com/mrdoob/draco.js
 | `GLTFLoader.parse`, worker pool — Chrome (V8) | 🟢 1.23× faster | 🔴 1.10× slower |
 
 On par with draco.js, faster than the wasm decoder single-threaded, and competitive in a real
-`GLTFLoader.parse` with the main thread left free. And with no wasm to fetch and compile, the
-first load is faster than any warm benchmark shows.
+`GLTFLoader.parse` with the main thread left free.
+
+🟢 **Cold start is the real win, and no warm benchmark shows it:** there's no `draco_decoder.wasm`
+to fetch and compile before the first decode, so the first model on screen appears sooner.
 
 ## Download size
 
-Over the wire (brotli): **minidraco ~45 KB**, **draco.js ~22 KB**, **draco3d wasm ~76 KB** — and
-the wasm is a separate fetch you must host, while the JS decoders ship in your bundle.
+Over the wire (brotli): **minidraco ~45 KB** with the worker pool (~23 KB in your bundle + a ~22 KB
+worker chunk fetched on first decode), or **~23 KB** via `minidraco/three/single`, which drops the
+worker chunk. **draco.js ~22 KB**, **draco3d wasm ~76 KB** — and the wasm is a separate file you
+must host, while the JS decoders ship inside your bundle.
 
 ## Monorepo
 
