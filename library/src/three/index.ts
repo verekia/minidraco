@@ -39,8 +39,8 @@ export interface MinidracoLoaderOptions {
   workers?: boolean
   // Worker pool size when workers are enabled (default 4).
   workerLimit?: number
-  // See the syncByteThreshold field (default 0 = always use the pool).
-  syncByteThreshold?: number
+  // See the mainThreadByteThreshold field (default 0 = always use the pool).
+  mainThreadByteThreshold?: number
 }
 
 // LoadingManager instances expose itemStart(); an options bag does not. Lets
@@ -113,13 +113,13 @@ class MinidracoLoader extends Loader<BufferGeometry> {
   defaultAttributeIDs: AttributeIDs
   defaultAttributeTypes: AttributeTypes
   workerLimit: number
-  // Opt-in (0 = disabled): buffers at or below this size decode synchronously
-  // on the main thread instead of paying the ~0.5 ms worker message roundtrip.
+  // Opt-in (0 = disabled): buffers at or below this size decode on the main
+  // thread instead of paying the ~0.5 ms worker message roundtrip.
   // Worth enabling (e.g. 4096) when the main thread is otherwise idle during
   // loads — in a full GLTFLoader parse the main thread is already busy
   // building geometries, and measurements show the pool wins there even for
   // tiny primitives.
-  syncByteThreshold: number
+  mainThreadByteThreshold: number
 
   _workers: WorkerEntry[]
   _taskId: number
@@ -158,7 +158,7 @@ class MinidracoLoader extends Loader<BufferGeometry> {
     }
 
     this.workerLimit = options.workers === false ? 0 : (options.workerLimit ?? 4)
-    this.syncByteThreshold = options.syncByteThreshold ?? 0
+    this.mainThreadByteThreshold = options.mainThreadByteThreshold ?? 0
     this._workers = []
     this._taskId = 0
     this._tasks = new Map()
@@ -312,7 +312,7 @@ class MinidracoLoader extends Loader<BufferGeometry> {
 
   async _runTask(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<BufferGeometry> {
     if (this._workersAvailable()) {
-      if (buffer.byteLength > this.syncByteThreshold) {
+      if (buffer.byteLength > this.mainThreadByteThreshold) {
         try {
           const raw = await this._decodeInWorker(buffer, taskConfig)
           return this._buildGeometryFromRaw(raw, taskConfig)

@@ -1,7 +1,3 @@
-export { Decoder } from './decoder/compression/Decode'
-export { DecoderBuffer } from './decoder/core/DecoderBuffer'
-export { DataType } from './decoder/core/DracoTypes'
-export { EncodedGeometryType } from './decoder/compression/config/CompressionShared'
 export { GeometryAttributeType } from './decoder/attributes/GeometryAttribute'
 export { Mesh } from './decoder/mesh/Mesh'
 export { PointAttribute } from './decoder/attributes/PointAttribute'

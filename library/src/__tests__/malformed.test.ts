@@ -7,7 +7,8 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
-import { DecoderBuffer, decodeDracoMesh } from '../index'
+import { DecoderBuffer } from '../decoder/core/DecoderBuffer'
+import { decodeDracoMesh } from '../index'
 
 const fixture = (name: string) => new Uint8Array(readFileSync(`${import.meta.dir}/fixtures/${name}`))
 
