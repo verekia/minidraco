@@ -6,7 +6,6 @@ export { GeometryAttributeType } from './decoder/attributes/GeometryAttribute'
 export { Mesh } from './decoder/mesh/Mesh'
 export { PointAttribute } from './decoder/attributes/PointAttribute'
 
-import { EncodedGeometryType } from './decoder/compression/config/CompressionShared'
 import { Decoder } from './decoder/compression/Decode'
 import { DecoderBuffer } from './decoder/core/DecoderBuffer'
 import { Mesh } from './decoder/mesh/Mesh'
@@ -17,15 +16,12 @@ export const decodeDracoMesh = (data: Uint8Array): Mesh => {
   const buffer = new DecoderBuffer()
   buffer.init(data, data.length)
 
-  if (Decoder.getEncodedGeometryType(buffer) !== EncodedGeometryType.TRIANGULAR_MESH) {
-    throw new Error('minidraco: Input is not a Draco triangular mesh.')
-  }
-
   const decoder = new Decoder()
   const result = decoder.decodeMeshFromBuffer(buffer)
 
   if (!result.ok || result.mesh === null) {
-    throw new Error(`minidraco: ${result.message}`)
+    const message = result.message === 'Input is not a mesh.' ? 'Input is not a Draco triangular mesh.' : result.message
+    throw new Error(`minidraco: ${message}`)
   }
 
   return result.mesh

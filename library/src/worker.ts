@@ -86,11 +86,10 @@ const decodeTask = (task: DecodeTask, transfer: ArrayBuffer[]) => {
   const numPoints = mesh.numPoints()
   const numFaces = mesh.numFaces()
 
-  const indices = new Uint32Array(numFaces * 3)
-  indices.set(mesh.faces_.subarray(0, numFaces * 3))
+  const indices = new Uint32Array(mesh.faces_.buffer, mesh.faces_.byteOffset, numFaces * 3)
 
   const attributes: AttributeResult[] = []
-  transfer.push(indices.buffer)
+  transfer.push(indices.buffer as ArrayBuffer)
 
   for (const attributeName in attributeIDs) {
     const OutputTypedArray = typedArrayMap[attributeTypes[attributeName]]

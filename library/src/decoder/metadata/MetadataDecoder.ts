@@ -84,10 +84,7 @@ class MetadataDecoder {
     if (dataSize === undefined || dataSize === 0) {
       return false
     }
-    if (dataSize > this.buffer_!.remainingSize) {
-      return false
-    }
-    return this.buffer_!.decodeBytes(dataSize) !== undefined
+    return this._skipBytes(dataSize)
   }
 
   // Skips a name (uint8 length prefix followed by that many bytes).
@@ -99,7 +96,15 @@ class MetadataDecoder {
     if (nameLen === 0) {
       return true
     }
-    return this.buffer_!.decodeBytes(nameLen) !== undefined
+    return this._skipBytes(nameLen)
+  }
+
+  _skipBytes(size: number): boolean {
+    if (size > this.buffer_!.remainingSize) {
+      return false
+    }
+    this.buffer_!.advance(size)
+    return true
   }
 }
 

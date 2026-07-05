@@ -97,7 +97,7 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
         if (portableAttributeData.byteLength < 4 * numValues) {
           return false
         }
-        const bytes = buffer.decodeBytes(4 * numValues)
+        const bytes = buffer.decodeBytesView(4 * numValues)
         if (bytes === undefined) return false
         const srcView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
         for (let i = 0; i < numValues; i++) {
@@ -107,13 +107,14 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
         if (buffer.remainingSize < numBytes * numValues) {
           return false
         }
+        const bytes = buffer.decodeBytesView(numBytes * numValues)
+        if (bytes === undefined) return false
         for (let i = 0; i < numValues; i++) {
-          const valueBytes = buffer.decodeBytes(numBytes)
-          if (valueBytes === undefined) return false
           // Little-endian; |= with << sign-extends into a 32-bit int.
           let val = 0
+          const valueOffset = i * numBytes
           for (let b = 0; b < numBytes; b++) {
-            val |= valueBytes[b] << (b * 8)
+            val |= bytes[valueOffset + b] << (b * 8)
           }
           portableAttributeData[i] = val
         }

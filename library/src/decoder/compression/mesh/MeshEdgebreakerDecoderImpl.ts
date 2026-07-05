@@ -1098,7 +1098,8 @@ class CornerTable {
     this._numVertices++
     // Array pre-allocated in reset(); extend only when capacity is exceeded.
     if (newVertex >= this._vertexCorners!.length) {
-      const newArr = new Int32Array(this._vertexCorners!.length + 64)
+      const newCapacity = Math.max(newVertex + 1, this._vertexCorners!.length * 2, 64)
+      const newArr = new Int32Array(newCapacity)
       newArr.fill(-1)
       newArr.set(this._vertexCorners!)
       this._vertexCorners = newArr
