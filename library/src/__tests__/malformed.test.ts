@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
-import { decodeDracoMesh } from '../index'
+import { DecoderBuffer, decodeDracoMesh } from '../index'
 
 const fixture = (name: string) => new Uint8Array(readFileSync(`${import.meta.dir}/fixtures/${name}`))
 
@@ -69,5 +69,13 @@ describe('malformed input', () => {
         }
       }
     }
+  })
+
+  test('bit reads fail when the requested width runs past EOF', () => {
+    const buffer = new DecoderBuffer()
+    buffer.init(new Uint8Array([0xff]))
+
+    expect(buffer.startBitDecoding(false)).toBe(0)
+    expect(buffer.decodeLeastSignificantBits32(12)).toBeUndefined()
   })
 })

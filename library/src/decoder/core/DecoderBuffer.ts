@@ -55,7 +55,7 @@ class BitDecoder {
     let currOff = off
     while (bitsRead < nbits) {
       const bOff = currOff >> 3
-      if (bOff >= this._byteLength) break
+      if (bOff >= this._byteLength) return undefined
       const bShift = currOff & 7
       const bitsAvail = 8 - bShift
       const bitsNeeded = nbits - bitsRead
