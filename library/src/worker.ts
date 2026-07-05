@@ -1,4 +1,4 @@
-// Web Worker entry for MiniDRACOLoader's worker pool. Bundled self-contained
+// Web Worker entry for MinidracoLoader's worker pool. Bundled self-contained
 // (no imports) by tsup, so it can be spawned as a module worker via
 // `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })`
 // from the library dist, or inlined into an app bundle by webpack/turbopack.
@@ -13,7 +13,7 @@ interface DecodeTask {
 }
 
 // Tasks arrive batched (one message per worker per decode burst — see
-// MiniDRACOLoader._flushBatch) and results go back in one message, with all
+// MinidracoLoader._flushBatch) and results go back in one message, with all
 // decoded buffers in a single transfer list.
 interface DecodeRequest {
   tasks: DecodeTask[]

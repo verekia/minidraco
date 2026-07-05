@@ -31,7 +31,7 @@ import type { Mesh, PointAttribute } from '../index'
 export type AttributeIDs = Record<string, number | string>
 export type AttributeTypes = Record<string, string>
 
-export interface MiniDRACOLoaderOptions {
+export interface MinidracoLoaderOptions {
   // three.js LoadingManager, as with any loader.
   manager?: LoadingManager
   // false → decode synchronously on the main thread (no worker pool).
@@ -45,7 +45,7 @@ export interface MiniDRACOLoaderOptions {
 
 // LoadingManager instances expose itemStart(); an options bag does not. Lets
 // the constructor keep the three-compatible `new Loader(manager)` form while
-// also accepting `new MiniDRACOLoader({ workers: false })`.
+// also accepting `new MinidracoLoader({ workers: false })`.
 const isLoadingManager = (value: unknown): value is LoadingManager =>
   typeof (value as { itemStart?: unknown } | null | undefined)?.itemStart === 'function'
 
@@ -109,7 +109,7 @@ const _typedArrayMap: Record<string, TypedArrayConstructor> = {
   Uint32Array,
 }
 
-class MiniDRACOLoader extends Loader<BufferGeometry> {
+class MinidracoLoader extends Loader<BufferGeometry> {
   defaultAttributeIDs: AttributeIDs
   defaultAttributeTypes: AttributeTypes
   workerLimit: number
@@ -137,8 +137,8 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
   _workerBlobUrl: string | null
 
   // Accepts either a LoadingManager (three-compatible form) or an options bag.
-  constructor(managerOrOptions?: LoadingManager | MiniDRACOLoaderOptions) {
-    const options: MiniDRACOLoaderOptions = isLoadingManager(managerOrOptions)
+  constructor(managerOrOptions?: LoadingManager | MinidracoLoaderOptions) {
+    const options: MinidracoLoaderOptions = isLoadingManager(managerOrOptions)
       ? { manager: managerOrOptions }
       : (managerOrOptions ?? {})
     super(options.manager)
@@ -182,7 +182,7 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
   // no external decoder files to configure. The params are `unknown` (not
   // `string`/`object`) so the signatures stay assignable to THREE.DRACOLoader
   // across three versions, whose setDecoderPath has grown to accept a
-  // `string | DecoderPaths` — letting `new MiniDRACOLoader()` be passed to
+  // `string | DecoderPaths` — letting `new MinidracoLoader()` be passed to
   // GLTFLoader.setDRACOLoader() with no cast.
   setDecoderPath(_path?: unknown): this {
     return this
@@ -228,7 +228,7 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
     // the empty batch). The error is marked isDecodeError so _runTask rejects
     // the caller instead of retrying the decode on the main thread. The loader
     // stays reusable: a later decode spawns a fresh pool.
-    const disposedError = new Error('MiniDRACOLoader: disposed while decoding') as Error & { isDecodeError: boolean }
+    const disposedError = new Error('MinidracoLoader: disposed while decoding') as Error & { isDecodeError: boolean }
     disposedError.isDecodeError = true
     for (const task of this._batch) task.reject(disposedError)
     this._batch = []
@@ -394,7 +394,7 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
         for (const [id, task] of this._tasks) {
           if (task.entry.worker === worker) {
             this._tasks.delete(id)
-            task.reject(new Error(`MiniDRACOLoader worker failed: ${event.message ?? 'unknown error'}`))
+            task.reject(new Error(`MinidracoLoader worker failed: ${event.message ?? 'unknown error'}`))
           }
         }
       }
@@ -435,7 +435,7 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
     if (this._workersBroken || this._workers.length === 0) {
       // The pool broke (possibly between queueing and this flush) or spawning
       // failed; _runTask falls back to the synchronous path per task.
-      const error = new Error('MiniDRACOLoader: worker unavailable')
+      const error = new Error('MinidracoLoader: worker unavailable')
       for (const task of batch) task.reject(error)
       return
     }
@@ -559,9 +559,9 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
   }
 }
 
-export { MiniDRACOLoader, MiniDRACOLoader as DRACOLoader }
+export { MinidracoLoader, MinidracoLoader as DRACOLoader }
 
-// --- Compile-time guard: MiniDRACOLoader must stay assignable to a
+// --- Compile-time guard: MinidracoLoader must stay assignable to a
 // THREE.DRACOLoader-shaped type so it can be passed to
 // GLTFLoader.setDRACOLoader() with no cast on any three version. Newer three
 // types setDecoderPath as `string | DecoderPaths`, so the no-op setters must
@@ -576,4 +576,4 @@ type _DracoLoaderShape = {
   dispose(): unknown
 }
 type _Expect<T extends true> = T
-type _LoaderAssignabilityGuard = _Expect<MiniDRACOLoader extends _DracoLoaderShape ? true : false>
+type _LoaderAssignabilityGuard = _Expect<MinidracoLoader extends _DracoLoaderShape ? true : false>

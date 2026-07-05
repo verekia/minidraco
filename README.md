@@ -8,10 +8,10 @@ so decoding never blocks the main thread.
 
 ```ts
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { MiniDRACOLoader } from 'minidraco/three'
+import { MinidracoLoader } from 'minidraco/three'
 
 const gltfLoader = new GLTFLoader()
-gltfLoader.setDRACOLoader(new MiniDRACOLoader())
+gltfLoader.setDRACOLoader(new MinidracoLoader())
 gltfLoader.load('model.glb', gltf => scene.add(gltf.scene))
 ```
 
@@ -19,8 +19,8 @@ A drop-in for `THREE.DRACOLoader`, no cast needed. Decoding runs in a worker poo
 a main-thread fallback. Options:
 
 ```ts
-new MiniDRACOLoader({ workers: false }) // decode on the main thread
-new MiniDRACOLoader({ workerLimit: 8 }) // pool size (default 4)
+new MinidracoLoader({ workers: false }) // decode on the main thread
+new MinidracoLoader({ workerLimit: 8 }) // pool size (default 4)
 ```
 
 Or decode a raw bitstream without Three.js:
