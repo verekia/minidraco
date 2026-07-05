@@ -1,25 +1,52 @@
 import { defineConfig } from 'tsup'
 
-// Two separate builds instead of one multi-entry build: when entries share
-// modules (the decoder core), tsup's dts bundler hoists the shared types into
-// a content-hashed chunk (Mesh-<hash>.d.ts). Building `three` on its own makes
-// each d.ts self-contained — the types are duplicated structurally, which TS
-// treats as identical.
+// JS and d.ts build separately. JS uses shared chunks so the Three loader shell
+// can stay separate from the decoder core; d.ts stays per-entry because tsup's
+// declaration bundler otherwise hoists shared public types into hashed files.
 export default defineConfig([
   {
-    // `minidraco` (pure decoder, no `three` import) and the self-contained
-    // module worker spawned by MiniDRACOLoader's pool.
-    entry: { index: 'src/index.ts', worker: 'src/worker.ts' },
+    entry: { index: 'src/index.ts', three: 'src/three/index.ts', 'three/vite': 'src/three/vite.ts' },
     clean: true,
     format: ['esm'],
-    dts: true,
+    dts: false,
+    splitting: true,
+    external: ['three'],
+  },
+  {
+    // Default worker remains self-contained for bundlers that emit worker URLs
+    // as static assets and do not deploy sibling chunks with those assets.
+    entry: { worker: 'src/worker.ts' },
+    format: ['esm'],
+    dts: false,
     splitting: false,
   },
   {
-    // `minidraco/three` — the DRACOLoader drop-in built on top of the core.
+    // Vite owns worker graphs, so this worker can import the shared decoder
+    // entry instead of embedding a second copy of it.
+    entry: { 'worker-vite': 'src/worker.ts' },
+    format: ['esm'],
+    dts: false,
+    splitting: false,
+    external: ['./index', './index.js'],
+  },
+  {
+    entry: { index: 'src/index.ts', worker: 'src/worker.ts' },
+    format: ['esm'],
+    dts: { only: true },
+    splitting: false,
+  },
+  {
     entry: { three: 'src/three/index.ts' },
     format: ['esm'],
-    dts: true,
+    dts: { only: true },
     splitting: false,
+    external: ['three'],
+  },
+  {
+    entry: { 'three/vite': 'src/three/vite.ts' },
+    format: ['esm'],
+    dts: { only: true },
+    splitting: false,
+    external: ['three'],
   },
 ])

@@ -4,7 +4,9 @@ export type { AttributeIDs, AttributeTypes, MiniDRACOLoaderOptions } from './cor
 
 class MiniDRACOLoader extends MiniDRACOLoaderBase {
   override _createWorker(): Worker | null {
-    return this._createWorkerFromUrl(this._workerUrl ?? new URL('./worker.js', import.meta.url))
+    if (this._workerUrl !== null) return this._createWorkerFromUrl(this._workerUrl)
+
+    return new Worker(new URL('../worker-vite.js', import.meta.url), { type: 'module' })
   }
 }
 
