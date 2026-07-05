@@ -221,6 +221,19 @@ class MiniDRACOLoader extends Loader<BufferGeometry> {
   dispose(): this {
     for (const entry of this._workers) entry.worker.terminate()
     this._workers = []
+    // Settle everything still outstanding so no caller promise hangs after
+    // teardown. Terminated workers never post back, and a batch flush already
+    // scheduled for this tick would otherwise respawn untracked workers — so
+    // reject the queued batch too and empty it (the stale flush then no-ops on
+    // the empty batch). The error is marked isDecodeError so _runTask rejects
+    // the caller instead of retrying the decode on the main thread. The loader
+    // stays reusable: a later decode spawns a fresh pool.
+    const disposedError = new Error('MiniDRACOLoader: disposed while decoding') as Error & { isDecodeError: boolean }
+    disposedError.isDecodeError = true
+    for (const task of this._batch) task.reject(disposedError)
+    this._batch = []
+    this._batchScheduled = false
+    for (const [, task] of this._tasks) task.reject(disposedError)
     this._tasks.clear()
     if (this._workerBlobUrl !== null) {
       URL.revokeObjectURL(this._workerBlobUrl)
