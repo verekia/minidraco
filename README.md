@@ -23,6 +23,9 @@ new MiniDRACOLoader({ workers: false }) // decode on the main thread
 new MiniDRACOLoader({ workerLimit: 8 }) // pool size (default 4)
 ```
 
+If you _only_ ever decode on the main thread, import from `minidraco/three/single` instead — same
+API, but with no worker code so the bundler never emits the worker chunk.
+
 Or decode a raw bitstream without Three.js:
 
 ```ts
