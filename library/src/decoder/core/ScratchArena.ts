@@ -22,12 +22,15 @@
 // class fits. Requests too large to pool are served by a plain allocation.
 const MAX_CLASS = 28
 const freeInt32: Int32Array[][] = []
+const freeUint32: Uint32Array[][] = []
 const freeUint8: Uint8Array[][] = []
 for (let i = 0; i <= MAX_CLASS; ++i) {
   freeInt32.push([])
+  freeUint32.push([])
   freeUint8.push([])
 }
 const borrowedInt32: Int32Array[] = []
+const borrowedUint32: Uint32Array[] = []
 const borrowedUint8: Uint8Array[] = []
 
 // Smallest k with (1 << k) >= size.
@@ -40,6 +43,16 @@ const takeInt32 = (size: number): Int32Array => {
   let pooled = bucket.length > 0 ? bucket.pop()! : new Int32Array(size)
   if (pooled.length < size) pooled = new Int32Array(1 << k)
   borrowedInt32.push(pooled)
+  return pooled.length === size ? pooled : pooled.subarray(0, size)
+}
+
+const takeUint32 = (size: number): Uint32Array => {
+  const k = sizeClass(size)
+  if (k > MAX_CLASS) return new Uint32Array(size)
+  const bucket = freeUint32[k]
+  let pooled = bucket.length > 0 ? bucket.pop()! : new Uint32Array(size)
+  if (pooled.length < size) pooled = new Uint32Array(1 << k)
+  borrowedUint32.push(pooled)
   return pooled.length === size ? pooled : pooled.subarray(0, size)
 }
 
@@ -62,6 +75,9 @@ export const scratchInt32Filled = (size: number, value: number): Int32Array => {
   view.fill(value)
   return view
 }
+
+// Exact-size view over a pooled buffer; contents are arbitrary.
+export const scratchUint32 = (size: number): Uint32Array => takeUint32(size)
 
 // Exact-size view over a pooled buffer; contents are arbitrary.
 export const scratchUint8 = (size: number): Uint8Array => takeUint8(size)
@@ -88,10 +104,15 @@ export const releaseScratch = (): void => {
     const buffer = borrowedInt32[i]
     freeInt32[sizeClass(buffer.length)].push(buffer)
   }
+  for (let i = 0; i < borrowedUint32.length; ++i) {
+    const buffer = borrowedUint32[i]
+    freeUint32[sizeClass(buffer.length)].push(buffer)
+  }
   for (let i = 0; i < borrowedUint8.length; ++i) {
     const buffer = borrowedUint8[i]
     freeUint8[sizeClass(buffer.length)].push(buffer)
   }
   borrowedInt32.length = 0
+  borrowedUint32.length = 0
   borrowedUint8.length = 0
 }
