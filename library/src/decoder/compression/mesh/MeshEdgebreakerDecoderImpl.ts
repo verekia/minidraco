@@ -1,7 +1,12 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerDecoderImpl.js (MIT)
 
 import { DecoderBuffer } from '../../core/DecoderBuffer'
-import { scratchInt32 } from '../../core/ScratchArena'
+import {
+  scratchInt32,
+  scratchInt32Filled,
+  scratchUint8Filled,
+  scratchUint8Zeroed,
+} from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { MeshAttributeElementType } from '../../mesh/Mesh'
 import { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTable'
@@ -252,7 +257,8 @@ class MeshEdgebreakerDecoderImpl {
     this._attributeData = []
     for (let i = 0; i < numAttributeData; ++i) {
       const ad = new AttributeData()
-      ad.attributeSeamCorners = new Int32Array(numFaces * 3)
+      // Decode-scoped: consumed a few lines below, before the decode returns.
+      ad.attributeSeamCorners = scratchInt32(numFaces * 3)
       ad.numSeamCorners = 0
       this._attributeData.push(ad)
     }
@@ -264,7 +270,7 @@ class MeshEdgebreakerDecoderImpl {
     // All vertices start as holes (boundaries). Uint8Array (1=hole) keeps the
     // per-vertex reads/writes monomorphic; vertex count never exceeds this
     // length (enforced via maxNumVertices), so fixed-size storage is safe.
-    this._isVertHole = new Uint8Array(this._numEncodedVertices + numEncodedSplitSymbols).fill(1)
+    this._isVertHole = scratchUint8Filled(this._numEncodedVertices + numEncodedSplitSymbols, 1)
 
     if (this._decodeHoleAndTopologySplitEvents(this._decoder!.buffer()!) === -1) {
       return false
@@ -794,7 +800,8 @@ class MeshEdgebreakerDecoderImpl {
     const attributeData = this._attributeData
     const numAttrData = attributeData.length
     let numPoints = 0
-    const cornerToPointMap = new Int32Array(ct.numCorners())
+    // Decode-scoped: fully consumed by the faces_ fill at the end of this method.
+    const cornerToPointMap = scratchInt32(ct.numCorners())
 
     const numVertices = ct.numVertices()
     // Flat connectivity for the inlined swingRight ring walk and per-attribute
@@ -817,7 +824,7 @@ class MeshEdgebreakerDecoderImpl {
     if (numAttrData === 1) {
       anyAttVertexOnSeam = attVertexOnSeam[0]
     } else {
-      anyAttVertexOnSeam = new Uint8Array(numVertices)
+      anyAttVertexOnSeam = scratchUint8Zeroed(numVertices)
       for (let i = 0; i < numAttrData; ++i) {
         const attSeam = attVertexOnSeam[i]
         for (let v = 0; v < numVertices; ++v) {
@@ -1041,9 +1048,11 @@ class CornerTable {
     // C++ reserve() allocates capacity but keeps size 0; vertices are added
     // incrementally via addNewVertex().
     this._numVertices = 0
-    this._cornerToVertex = new Int32Array(this._numCorners).fill(-1)
-    this._oppositeCorners = new Int32Array(this._numCorners).fill(-1)
-    this._vertexCorners = new Int32Array(numVertices).fill(-1)
+    // Decode-scoped scratch: the result mesh copies what it needs out of these
+    // (faces_ in _assignPointsToCorners), so they never outlive the decode.
+    this._cornerToVertex = scratchInt32Filled(this._numCorners, -1)
+    this._oppositeCorners = scratchInt32Filled(this._numCorners, -1)
+    this._vertexCorners = scratchInt32Filled(numVertices, -1)
     return true
   }
 
@@ -1099,8 +1108,7 @@ class CornerTable {
     // Array pre-allocated in reset(); extend only when capacity is exceeded.
     if (newVertex >= this._vertexCorners!.length) {
       const newCapacity = Math.max(newVertex + 1, this._vertexCorners!.length * 2, 64)
-      const newArr = new Int32Array(newCapacity)
-      newArr.fill(-1)
+      const newArr = scratchInt32Filled(newCapacity, -1)
       newArr.set(this._vertexCorners!)
       this._vertexCorners = newArr
     }

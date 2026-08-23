@@ -1,15 +1,28 @@
 // Ported from draco.js src/attributes/AttributeTransformData.js (MIT)
 
-import { DataBuffer } from '../core/DataBuffer'
 import { AttributeTransformType } from './AttributeTransformType'
+
+// Initial parameter-buffer capacity: a quantization transform appends
+// 1 + numComponents + 1 values of 4 bytes, so 32 bytes covers every attribute
+// the decoder produces without a single grow.
+const INITIAL_CAPACITY = 32
 
 class AttributeTransformData {
   _transformType: number
-  _buffer: DataBuffer
+  // Parameter bytes, little-endian, appended in transform-defined order.
+  // Capacity grows geometrically and the DataView is cached alongside it: the
+  // previous DataBuffer-backed version reallocated the buffer and built a
+  // fresh DataView on *every* appended value, which on primitive-heavy files
+  // cost more than the dequantization it describes.
+  _bytes: Uint8Array
+  _view: DataView
+  _size: number
 
   constructor() {
     this._transformType = AttributeTransformType.INVALID
-    this._buffer = new DataBuffer()
+    this._bytes = new Uint8Array(INITIAL_CAPACITY)
+    this._view = new DataView(this._bytes.buffer)
+    this._size = 0
   }
 
   get transformType(): number {
@@ -20,13 +33,32 @@ class AttributeTransformData {
     this._transformType = type
   }
 
+  // Number of parameter bytes written so far (the next append offset).
+  get dataSize(): number {
+    return this._size
+  }
+
+  get data(): Uint8Array {
+    return this._bytes.subarray(0, this._size)
+  }
+
+  _reserve(sizeNeeded: number): void {
+    if (sizeNeeded <= this._bytes.length) return
+    let capacity = this._bytes.length * 2
+    if (capacity < sizeNeeded) capacity = sizeNeeded
+    const grown = new Uint8Array(capacity)
+    grown.set(this._bytes)
+    this._bytes = grown
+    this._view = new DataView(grown.buffer)
+  }
+
   setParameterValue(byteOffset: number, value: number, type: string): void {
     const sizeNeeded = byteOffset + this._typeSize(type)
-    if (sizeNeeded > this._buffer.dataSize) {
-      this._buffer.resize(sizeNeeded)
+    this._reserve(sizeNeeded)
+    if (sizeNeeded > this._size) {
+      this._size = sizeNeeded
     }
-    const data = this._buffer.data
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+    const view = this._view
     switch (type) {
       case 'int32':
         view.setInt32(byteOffset, value, true)
@@ -59,7 +91,7 @@ class AttributeTransformData {
   }
 
   appendParameterValue(value: number, type: string): void {
-    this.setParameterValue(this._buffer.dataSize, value, type)
+    this.setParameterValue(this._size, value, type)
   }
 
   _typeSize(type: string): number {
