@@ -1,12 +1,7 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerDecoderImpl.js (MIT)
 
 import { DecoderBuffer } from '../../core/DecoderBuffer'
-import {
-  scratchInt32,
-  scratchInt32Filled,
-  scratchUint8Filled,
-  scratchUint8Zeroed,
-} from '../../core/ScratchArena'
+import { scratchInt32, scratchInt32Filled, scratchUint8Filled, scratchUint8Zeroed } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { MeshAttributeElementType } from '../../mesh/Mesh'
 import { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTable'

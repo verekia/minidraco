@@ -78,7 +78,10 @@ class MeshEdgebreakerTraversalDecoder {
       const byteOffset = off >> 3
       if (byteOffset + 4 < bd._byteLength) {
         const bits =
-          ((buf[byteOffset] | (buf[byteOffset + 1] << 8) | (buf[byteOffset + 2] << 16) | (buf[byteOffset + 3] << 24)) >>>
+          ((buf[byteOffset] |
+            (buf[byteOffset + 1] << 8) |
+            (buf[byteOffset + 2] << 16) |
+            (buf[byteOffset + 3] << 24)) >>>
             (off & 7)) &
           7
         if ((bits & 1) === TOPOLOGY_C) {
