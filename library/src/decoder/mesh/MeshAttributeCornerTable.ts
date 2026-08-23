@@ -256,18 +256,13 @@ class MeshAttributeCornerTable {
     return this.is_vertex_on_seam_
   }
 
-  hasSameSeams(other: MeshAttributeCornerTable | null | undefined): boolean {
-    if (other === null || other === undefined) return false
-    const seamA = this.is_edge_on_seam_
-    const seamB = other.is_edge_on_seam_
-    if (seamA.length !== seamB.length) return false
-    for (let i = 0, l = seamA.length; i < l; ++i) {
-      if (seamA[i] !== seamB[i]) return false
-    }
-    return true
-  }
-
-  adoptVertexRecompute(other: MeshAttributeCornerTable): void {
+  // Takes over another table's state wholesale. Only valid when both tables
+  // were built from the same corner table and the same seam edges, in which
+  // case every one of these is identical and read-only from here on.
+  adoptFrom(other: MeshAttributeCornerTable): void {
+    this.corner_table_ = other.corner_table_
+    this.is_edge_on_seam_ = other.is_edge_on_seam_
+    this.is_vertex_on_seam_ = other.is_vertex_on_seam_
     this.corner_to_vertex_map_ = other.corner_to_vertex_map_
     this.num_attribute_vertices_ = other.num_attribute_vertices_
     this.vertex_to_left_most_corner_map_ = other.vertex_to_left_most_corner_map_

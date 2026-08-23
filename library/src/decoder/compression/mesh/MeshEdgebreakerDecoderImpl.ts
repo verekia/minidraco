@@ -298,22 +298,47 @@ class MeshEdgebreakerDecoderImpl {
     }
     this._traversalDecoder.done()
 
+    // _decodeAttributeConnectivities lists each seam edge exactly once, at its
+    // lower-face corner, in increasing corner order -- so two attribute data
+    // sets have the same seams exactly when their seam-corner lists match.
+    // Comparing those lists (a few entries per seam) instead of the derived
+    // per-corner seam flags lets a matching set skip building its flags and
+    // vertex maps entirely, rather than building them and then discovering they
+    // were redundant.
     let previousConnectivityData: MeshAttributeCornerTable | null = null
+    let previousSeamCorners: Int32Array | null = null
+    let previousSeamCount = 0
     for (let i = 0; i < this._attributeData.length; ++i) {
       const connectivityData = this._attributeData[i].connectivityData
-      connectivityData.initEmpty(this._cornerTable)
       // Indexed loop avoids a for..of iterator per seam.
       const seamCorners = this._attributeData[i].attributeSeamCorners
       const seamCount = this._attributeData[i].numSeamCorners
-      for (let s = 0; s < seamCount; ++s) {
-        connectivityData.addSeamEdge(seamCorners[s])
+
+      let sameAsPrevious = previousConnectivityData !== null && seamCount === previousSeamCount
+      if (sameAsPrevious) {
+        const previous = previousSeamCorners!
+        for (let s = 0; s < seamCount; ++s) {
+          if (seamCorners[s] !== previous[s]) {
+            sameAsPrevious = false
+            break
+          }
+        }
       }
-      if (connectivityData.hasSameSeams(previousConnectivityData)) {
-        connectivityData.adoptVertexRecompute(previousConnectivityData!)
-      } else if (!connectivityData.recomputeVertices(null, null)) {
-        return false
+
+      if (sameAsPrevious) {
+        connectivityData.adoptFrom(previousConnectivityData!)
+      } else {
+        connectivityData.initEmpty(this._cornerTable)
+        for (let s = 0; s < seamCount; ++s) {
+          connectivityData.addSeamEdge(seamCorners[s])
+        }
+        if (!connectivityData.recomputeVertices(null, null)) {
+          return false
+        }
       }
       previousConnectivityData = connectivityData
+      previousSeamCorners = seamCorners
+      previousSeamCount = seamCount
     }
 
     this._posEncodingData.init(this._cornerTable.numVertices())
