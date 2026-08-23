@@ -127,6 +127,12 @@ class DepthFirstTraverser {
       vertexToEncodedMap[prevVert] = numValues++
     }
 
+    // faceId and the corner's position within its face are carried together
+    // through the loop: every corner reached below arrives with its face id
+    // already computed, so `cornerId - 3 * faceId` replaces the `% 3` the
+    // next/prev arithmetic would otherwise need on each of the loop's three
+    // corner steps (integer division and modulus by 3 are several instructions
+    // each, and this is the single hottest loop in the decoder).
     while (stackSize > 0) {
       cornerId = stack[stackSize - 1]
       let faceId = (cornerId / 3) | 0
@@ -146,6 +152,8 @@ class DepthFirstTraverser {
           encodingData.numValues = numValues
           return false
         }
+        const faceBase = faceId * 3
+        const nextCornerId = cornerId === faceBase + 2 ? faceBase : cornerId + 1
         if (!isVertexVisited[vertId]) {
           // Inlined isOnBoundary
           const lc: number | undefined = vertexLeftmost[vertId]
@@ -160,7 +168,6 @@ class DepthFirstTraverser {
           vertexToEncodedMap[vertId] = numValues++
           if (!onBoundary) {
             // Move to the right corner: opposite(next(cornerId)).
-            const nextCornerId = cornerId % 3 === 2 ? cornerId - 2 : cornerId + 1
             cornerId = oppositeCorners[nextCornerId]
             faceId = (cornerId / 3) | 0
             continue
@@ -168,10 +175,9 @@ class DepthFirstTraverser {
         }
 
         // The current vertex has been already visited or it was on a boundary.
-        const nextCornerId = cornerId % 3 === 2 ? cornerId - 2 : cornerId + 1
         const rightCornerId = oppositeCorners[nextCornerId]
 
-        const prevCornerId = cornerId % 3 === 0 ? cornerId + 2 : cornerId - 1
+        const prevCornerId = cornerId === faceBase ? faceBase + 2 : cornerId - 1
         const leftCornerId = oppositeCorners[prevCornerId]
 
         const rightFaceId = rightCornerId === kInvalidCornerIndex ? kInvalidFaceIndex : (rightCornerId / 3) | 0

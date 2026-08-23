@@ -12,6 +12,7 @@ import { MeshAttributeElementType } from '../../mesh/Mesh'
 import { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTable'
 import { SequentialAttributeDecodersController } from '../attributes/SequentialAttributeDecodersController'
 import { MeshTraversalMethod } from '../config/CompressionShared'
+import { ANS_L_BASE } from '../entropy/ANSCoding'
 import {
   TopologySplitEventData,
   TOPOLOGY_C,
@@ -745,6 +746,11 @@ class MeshEdgebreakerDecoderImpl {
   // per-corner decodeNextBit work. Within each face the three corners are
   // visited in encoder edge order [base, next, prev] = [c, c+1, c+2] (the
   // caller always starts a face at its base corner, so next/prev need no wrap).
+  //
+  // The face comparison the C++ makes -- floor(oppCorner/3) >= floor(cc/3) for
+  // the face's base corner -- is just `oppCorner >= faceBaseCorner`, since the
+  // base corner is a multiple of 3. That removes the per-corner division; the
+  // invalid-corner case (-1) is still handled by the branch above it.
   _decodeAttributeConnectivities(): void {
     const oppositeCorners = this._cornerTable!.oppositeCornerArray()
     const attributeData = this._attributeData
@@ -752,8 +758,52 @@ class MeshEdgebreakerDecoderImpl {
     const connectivityDecoders = this._traversalDecoder._attributeConnectivityDecoders!
     const numCorners = this._cornerTable!.numCorners()
 
+    // Overwhelmingly common case (one attribute data set): run a specialized
+    // loop with the seam list, its counter and the whole rANS bit-decoder state
+    // in locals. The generic loop below pays a property load per corner for
+    // each of those, and a real call per decoded bit.
+    if (numAttrData === 1) {
+      const ad = attributeData[0]
+      const seamCorners = ad.attributeSeamCorners
+      let numSeamCorners = ad.numSeamCorners
+      const decoder = connectivityDecoders[0]
+      const ans = decoder.ansDecoder_
+      const p = decoder.p_
+      const buf = ans.buf!
+      const bufStart = ans.bufStart
+      let state = ans.state
+      let bufOffset = ans.bufOffset
+
+      for (let corner = 0; corner < numCorners; corner += 3) {
+        for (let k = 0; k < 3; ++k) {
+          const cc = corner + k
+          const oppCorner = oppositeCorners[cc]
+          if (oppCorner === kInvalidCornerIndex) {
+            seamCorners[numSeamCorners++] = cc
+          } else if (oppCorner >= corner) {
+            // Inlined RAnsBitDecoder.decodeNextBit().
+            if (state < ANS_L_BASE && bufOffset > bufStart) {
+              state = (state << 8) | buf[--bufOffset]
+            }
+            const rem = state & 0xff
+            const xn = (state >>> 8) * p
+            if (rem < p) {
+              state = xn + rem
+              seamCorners[numSeamCorners++] = cc
+            } else {
+              state = state - xn - p
+            }
+          }
+        }
+      }
+
+      ans.state = state
+      ans.bufOffset = bufOffset
+      ad.numSeamCorners = numSeamCorners
+      return
+    }
+
     for (let corner = 0; corner < numCorners; corner += 3) {
-      const srcFaceId = (corner / 3) | 0
       for (let k = 0; k < 3; ++k) {
         const cc = corner + k
         const oppCorner = oppositeCorners[cc]
@@ -762,7 +812,7 @@ class MeshEdgebreakerDecoderImpl {
             const ad = attributeData[i]
             ad.attributeSeamCorners[ad.numSeamCorners++] = cc
           }
-        } else if (((oppCorner / 3) | 0) >= srcFaceId) {
+        } else if (oppCorner >= corner) {
           for (let i = 0; i < numAttrData; ++i) {
             if (connectivityDecoders[i].decodeNextBit()) {
               const ad = attributeData[i]
@@ -973,9 +1023,12 @@ class MeshAttributeIndicesEncodingData {
 
   init(numVertices: number): void {
     // Int32Array (non-negative data indices) keeps the hot prediction-lookup
-    // reads monomorphic.
-    this._vertexToEncodedAttributeValueIndexMap = new Int32Array(numVertices)
-    this._encodedAttributeValueIndexToCornerMap = new Int32Array(numVertices)
+    // reads monomorphic. Decode-scoped scratch: both maps are consumed by the
+    // attribute decoders of this primitive and never escape into the result.
+    // The vertex map is zero-filled because vertices that no face reaches are
+    // never written by the traversal but can still be read back.
+    this._vertexToEncodedAttributeValueIndexMap = scratchInt32Filled(numVertices, 0)
+    this._encodedAttributeValueIndexToCornerMap = scratchInt32(numVertices)
     this._numValues = 0
   }
 
