@@ -100,11 +100,11 @@ class MeshAttributeCornerTable {
     // Flat connectivity arrays so the per-corner swings inline to typed-array
     // arithmetic instead of polymorphic dispatch.
     //   - seamOpp: seam-aware opposite (== this.opposite), used by swingLeft.
-    //   - baseOpp: raw opposite of the underlying table, used by swingRight
-    //     (matches corner_table_.swingRight, which is NOT seam-aware here).
+    //   - swingRight: the base table's precomputed CW ring step, which is NOT
+    //     seam-aware here (matches corner_table_.swingRight).
     // Both are final: all seams were added before recomputeVertices() runs.
     const seamOpp = this.oppositeCornerArray()
-    const baseOpp = ct.oppositeCornerArray()
+    const swingRight = ct.swingRightArray()
     const vertexLeftmost = ct.vertexLeftmostCornerArray()
     let numNewVertices = 0
 
@@ -117,14 +117,10 @@ class MeshAttributeCornerTable {
         leftMostMap[firstVertId] = c
         cornerToVertex[c] = firstVertId
 
-        let pv = c % 3 === 0 ? c + 2 : c - 1
-        let bopp = baseOpp[pv]
-        let actC = bopp < 0 ? kInvalidCornerIndex : bopp % 3 === 0 ? bopp + 2 : bopp - 1
+        let actC = swingRight[c]
         while (actC !== kInvalidCornerIndex && actC !== c) {
           cornerToVertex[actC] = firstVertId
-          pv = actC % 3 === 0 ? actC + 2 : actC - 1
-          bopp = baseOpp[pv]
-          actC = bopp < 0 ? kInvalidCornerIndex : bopp % 3 === 0 ? bopp + 2 : bopp - 1
+          actC = swingRight[actC]
         }
       } else {
         let firstVertId = numNewVertices++
@@ -146,9 +142,7 @@ class MeshAttributeCornerTable {
         cornerToVertex[firstC] = firstVertId
         leftMostMap[firstVertId] = firstC
 
-        let pv = firstC % 3 === 0 ? firstC + 2 : firstC - 1
-        let bopp = baseOpp[pv]
-        actC = bopp < 0 ? kInvalidCornerIndex : bopp % 3 === 0 ? bopp + 2 : bopp - 1
+        actC = swingRight[firstC]
         while (actC !== kInvalidCornerIndex && actC !== firstC) {
           const nAct = actC % 3 === 2 ? actC - 2 : actC + 1
           if (isEdgeOnSeam[nAct]) {
@@ -156,9 +150,7 @@ class MeshAttributeCornerTable {
             leftMostMap[firstVertId] = actC
           }
           cornerToVertex[actC] = firstVertId
-          pv = actC % 3 === 0 ? actC + 2 : actC - 1
-          bopp = baseOpp[pv]
-          actC = bopp < 0 ? kInvalidCornerIndex : bopp % 3 === 0 ? bopp + 2 : bopp - 1
+          actC = swingRight[actC]
         }
       }
     }

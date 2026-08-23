@@ -871,11 +871,10 @@ class MeshEdgebreakerDecoderImpl {
     const cornerToPointMap = scratchInt32(ct.numCorners())
 
     const numVertices = ct.numVertices()
-    // Flat connectivity for the inlined swingRight ring walk and per-attribute
-    // lookups — avoids dispatch on the polymorphic corner tables for every
-    // corner of every ring. swingRight(x) = previous(baseOpp[previous(x)]).
+    // Flat connectivity for the ring walk and per-attribute lookups — avoids
+    // dispatch on the polymorphic corner tables for every corner of every ring.
     const vertexLeftmost = ct.vertexLeftmostCornerArray()
-    const baseOpp = ct.oppositeCornerArray()
+    const swingRight = ct.swingRightArray()
     const _baseCornerToVertex = ct.cornerToVertexArray()
     const isVertHole = this._isVertHole
     const attCornerToVertex = new Array<Int32Array | number[]>(numAttrData)
@@ -913,39 +912,25 @@ class MeshEdgebreakerDecoderImpl {
         const initialC = c
         const pointId = numPoints++
         cornerToPointMap[initialC] = pointId
-        // swingRight (c = prev(baseOpp[prev(c)]))
-        let rem = initialC % 3
-        let pv = rem === 0 ? initialC + 2 : initialC - 1
-        let opp = baseOpp[pv]
-        c = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+        c = swingRight[initialC]
         while (c !== kInvalidCornerIndex && c !== initialC) {
           cornerToPointMap[c] = pointId
-          rem = c % 3
-          pv = rem === 0 ? c + 2 : c - 1
-          opp = baseOpp[pv]
-          c = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+          c = swingRight[c]
         }
       } else {
         let deduplicationFirstCorner = c
-        let rem: number, pv: number, opp: number
         if (!isVertHole[v]) {
           // Find the first seam (of any attribute).
           if (numAttrData === 1) {
             const vertId = singleAttC2V![c]
-            rem = c % 3
-            pv = rem === 0 ? c + 2 : c - 1
-            opp = baseOpp[pv]
-            let actC = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+            let actC = swingRight[c]
             while (actC !== c) {
               if (actC === kInvalidCornerIndex) return false
               if (singleAttC2V![actC] !== vertId) {
                 deduplicationFirstCorner = actC
                 break
               }
-              rem = actC % 3
-              pv = rem === 0 ? actC + 2 : actC - 1
-              opp = baseOpp[pv]
-              actC = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+              actC = swingRight[actC]
             }
           } else {
             for (let i = 0; i < numAttrData; ++i) {
@@ -954,10 +939,7 @@ class MeshEdgebreakerDecoderImpl {
               }
               const attC2V = attCornerToVertex[i]
               const vertId = attC2V[c]
-              rem = c % 3
-              pv = rem === 0 ? c + 2 : c - 1
-              opp = baseOpp[pv]
-              let actC = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+              let actC = swingRight[c]
               let seamFound = false
               while (actC !== c) {
                 if (actC === kInvalidCornerIndex) return false
@@ -966,25 +948,18 @@ class MeshEdgebreakerDecoderImpl {
                   seamFound = true
                   break
                 }
-                rem = actC % 3
-                pv = rem === 0 ? actC + 2 : actC - 1
-                opp = baseOpp[pv]
-                actC = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+                actC = swingRight[actC]
               }
               if (seamFound) break
             }
           }
         }
 
-        // Deduplication pass over corners on the processed vertex.
+        // Deduplication pass over corners on the processed vertex, CW.
         c = deduplicationFirstCorner
         cornerToPointMap[c] = numPoints++
-        // Traverse in CW direction (swingRight inlined).
         let prevC = c
-        rem = c % 3
-        pv = rem === 0 ? c + 2 : c - 1
-        opp = baseOpp[pv]
-        c = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+        c = swingRight[c]
         while (c !== kInvalidCornerIndex && c !== deduplicationFirstCorner) {
           let attributeSeam: boolean
           if (numAttrData === 1) {
@@ -1005,10 +980,7 @@ class MeshEdgebreakerDecoderImpl {
             cornerToPointMap[c] = cornerToPointMap[prevC]
           }
           prevC = c
-          rem = c % 3
-          pv = rem === 0 ? c + 2 : c - 1
-          opp = baseOpp[pv]
-          c = opp < 0 ? kInvalidCornerIndex : opp % 3 === 0 ? opp + 2 : opp - 1
+          c = swingRight[c]
         }
       }
     }
@@ -1102,6 +1074,7 @@ class CornerTable {
   _cornerToVertex: Int32Array | null // corner -> vertex
   _oppositeCorners: Int32Array | null // corner -> opposite corner
   _vertexCorners: Int32Array | null // vertex -> left-most corner
+  _swingRight: Int32Array | null // corner -> next corner around its vertex, CW
 
   constructor() {
     this._numFaces = 0
@@ -1110,6 +1083,7 @@ class CornerTable {
     this._cornerToVertex = null
     this._oppositeCorners = null
     this._vertexCorners = null
+    this._swingRight = null
   }
 
   reset(numFaces: number, numVertices: number): boolean {
@@ -1123,7 +1097,34 @@ class CornerTable {
     this._cornerToVertex = scratchInt32Filled(this._numCorners, -1)
     this._oppositeCorners = scratchInt32Filled(this._numCorners, -1)
     this._vertexCorners = scratchInt32Filled(numVertices, -1)
+    this._swingRight = null
     return true
+  }
+
+  // swingRight(c) = previous(opposite(previous(c))) for every corner. Walking
+  // the corner ring of a vertex is the inner loop of both the attribute-vertex
+  // recompute and the point assignment, and each of those passes otherwise
+  // pays two modulus-by-3 chains per step on top of the opposite lookup. Built
+  // lazily -- callers only reach it once connectivity is final -- from
+  // decode-scoped scratch, and dropped by reset().
+  swingRightArray(): Int32Array {
+    let table = this._swingRight
+    if (table === null) {
+      const numCorners = this._numCorners
+      const opposite = this._oppositeCorners!
+      table = scratchInt32(numCorners)
+      // Unrolled per face: previous() of a face's corners is [c+2, c, c+1].
+      for (let c = 0; c < numCorners; c += 3) {
+        let o = opposite[c + 2]
+        table[c] = o < 0 ? kInvalidCornerIndex : o % 3 === 0 ? o + 2 : o - 1
+        o = opposite[c]
+        table[c + 1] = o < 0 ? kInvalidCornerIndex : o % 3 === 0 ? o + 2 : o - 1
+        o = opposite[c + 1]
+        table[c + 2] = o < 0 ? kInvalidCornerIndex : o % 3 === 0 ? o + 2 : o - 1
+      }
+      this._swingRight = table
+    }
+    return table
   }
 
   numFaces(): number {
