@@ -404,11 +404,18 @@ class MeshEdgebreakerDecoderImpl {
     // well-formed stream are valid (>= 0, < numCorners) and the flat arrays are
     // -1-initialized, so the helpers' guards are unneeded -- except the swing-
     // left boundary terminator below. Helpers remain for the cold post-loop code.
-    const vc = this._cornerTable! // _vertexCorners is re-read (addNewVertex may realloc).
+    const vc = this._cornerTable!
+    // vertexCorners tracks vc._vertexCorners, which addNewVertex reallocates
+    // only when the stream declares fewer vertices than it uses (reset()
+    // preallocates the declared count); the local is refreshed there and vc
+    // always keeps the authoritative reference for the cold code after the loop.
+    let vertexCorners = vc._vertexCorners!
+    const isVertHole = this._isVertHole
+    const traversalDecoder = this._traversalDecoder
     for (let symbolId = 0; symbolId < numSymbols; ++symbolId) {
       const faceIndex = numFacesDecoded++
       let checkTopologySplit = false
-      const symbol = this._traversalDecoder.decodeSymbol()
+      const symbol = traversalDecoder.decodeSymbol()
 
       if (symbol === TOPOLOGY_C) {
         // Create a new face between two edges on the open boundary.
@@ -417,7 +424,7 @@ class MeshEdgebreakerDecoderImpl {
         const cornerA = activeCornerStack[activeCornerStackSize - 1]
         const nA = cornerA % 3 === 2 ? cornerA - 2 : cornerA + 1 // next(cornerA)
         const vertexX = cornerToVertex[nA]
-        const lmcX = vc._vertexCorners![vertexX] // leftMostCorner(vertexX)
+        const lmcX = vertexCorners[vertexX] // leftMostCorner(vertexX)
         const cornerB = lmcX % 3 === 2 ? lmcX - 2 : lmcX + 1 // next(lmcX)
 
         if (cornerA === cornerB) return -1
@@ -441,8 +448,8 @@ class MeshEdgebreakerDecoderImpl {
         cornerToVertex[corner] = vertexX
         cornerToVertex[corner + 1] = vertBNext
         cornerToVertex[corner + 2] = vertAPrev
-        vc._vertexCorners![vertAPrev] = corner + 2
-        this._isVertHole[vertexX] = 0 // mark vertex x interior
+        vertexCorners[vertAPrev] = corner + 2
+        isVertHole[vertexX] = 0 // mark vertex x interior
         activeCornerStack[activeCornerStackSize - 1] = corner
       } else if (symbol === TOPOLOGY_R || symbol === TOPOLOGY_L) {
         // Create a new face extending from the open boundary edge.
@@ -467,16 +474,23 @@ class MeshEdgebreakerDecoderImpl {
         oppositeCorners[oppCorner] = cornerA
         oppositeCorners[cornerA] = oppCorner
 
-        const newVertIndex = this._cornerTable!.addNewVertex()
-        if (this._cornerTable!.numVertices() > maxNumVertices) return -1
+        // Inlined CornerTable.addNewVertex(); see vertexCorners above.
+        let newVertIndex: number
+        if (vc._numVertices < vertexCorners.length) {
+          newVertIndex = vc._numVertices++
+        } else {
+          newVertIndex = vc.addNewVertex()
+          vertexCorners = vc._vertexCorners!
+        }
+        if (vc._numVertices > maxNumVertices) return -1
 
         cornerToVertex[oppCorner] = newVertIndex
-        vc._vertexCorners![newVertIndex] = oppCorner
+        vertexCorners[newVertIndex] = oppCorner
 
         const pA = cornerA % 3 === 0 ? cornerA + 2 : cornerA - 1 // prev(cornerA)
         const vertexR = cornerToVertex[pA]
         cornerToVertex[cornerR] = vertexR
-        vc._vertexCorners![vertexR] = cornerR
+        vertexCorners[vertexR] = cornerR
 
         const nA = cornerA % 3 === 2 ? cornerA - 2 : cornerA + 1 // next(cornerA)
         cornerToVertex[cornerL] = cornerToVertex[nA]
@@ -518,13 +532,13 @@ class MeshEdgebreakerDecoderImpl {
         const pB = cornerB % 3 === 0 ? cornerB + 2 : cornerB - 1 // prev(cornerB)
         const vertBPrev = cornerToVertex[pB]
         cornerToVertex[corner + 2] = vertBPrev
-        vc._vertexCorners![vertBPrev] = corner + 2
+        vertexCorners[vertBPrev] = corner + 2
 
         let cornerN = cornerB % 3 === 2 ? cornerB - 2 : cornerB + 1 // next(cornerB)
         const vertexN = cornerToVertex[cornerN]
-        this._traversalDecoder.mergeVertices(vertexP, vertexN)
+        traversalDecoder.mergeVertices(vertexP, vertexN)
         // Update the left-most corner on the newly merged vertex.
-        vc._vertexCorners![vertexP] = vc._vertexCorners![vertexN] // leftMostCorner(vertexN)
+        vertexCorners[vertexP] = vertexCorners[vertexN] // leftMostCorner(vertexN)
 
         // Update vertex id at corner "n" and all corners CCW from it.
         // swingLeft(c) = next(opposite(next(c))).
@@ -539,34 +553,42 @@ class MeshEdgebreakerDecoderImpl {
           }
         }
         // Isolate the old vertex n.
-        vc._vertexCorners![vertexN] = -1
+        vertexCorners[vertexN] = -1
         if (removeInvalidVertices) {
           invalidVertices.push(vertexN)
         }
         activeCornerStack[activeCornerStackSize - 1] = corner
       } else if (symbol === TOPOLOGY_E) {
         const corner = 3 * faceIndex
-        const firstVertIndex = this._cornerTable!.addNewVertex()
-        // Three new vertices at the corners of the new face.
-        this._cornerTable!.addNewVertex()
-        this._cornerTable!.addNewVertex()
+        // Three new vertices at the corners of the new face (inlined
+        // addNewVertex; see vertexCorners above).
+        let firstVertIndex: number
+        if (vc._numVertices + 3 <= vertexCorners.length) {
+          firstVertIndex = vc._numVertices
+          vc._numVertices += 3
+        } else {
+          firstVertIndex = vc.addNewVertex()
+          vc.addNewVertex()
+          vc.addNewVertex()
+          vertexCorners = vc._vertexCorners!
+        }
 
-        if (this._cornerTable!.numVertices() > maxNumVertices) return -1
+        if (vc._numVertices > maxNumVertices) return -1
 
         cornerToVertex[corner] = firstVertIndex
         cornerToVertex[corner + 1] = firstVertIndex + 1
         cornerToVertex[corner + 2] = firstVertIndex + 2
 
-        vc._vertexCorners![firstVertIndex] = corner
-        vc._vertexCorners![firstVertIndex + 1] = corner + 1
-        vc._vertexCorners![firstVertIndex + 2] = corner + 2
+        vertexCorners[firstVertIndex] = corner
+        vertexCorners[firstVertIndex + 1] = corner + 1
+        vertexCorners[firstVertIndex + 2] = corner + 2
         activeCornerStack[activeCornerStackSize++] = corner // push the tip corner
         checkTopologySplit = true
       } else {
         return -1 // unknown symbol
       }
 
-      this._traversalDecoder.newActiveCornerReached(activeCornerStack[activeCornerStackSize - 1])
+      traversalDecoder.newActiveCornerReached(activeCornerStack[activeCornerStackSize - 1])
 
       if (checkTopologySplit) {
         const encoderSymbolId = numSymbols - symbolId - 1
@@ -590,7 +612,7 @@ class MeshEdgebreakerDecoderImpl {
       }
     }
 
-    if (this._cornerTable!.numVertices() > maxNumVertices) {
+    if (vc._numVertices > maxNumVertices) {
       return -1
     }
 
@@ -599,7 +621,7 @@ class MeshEdgebreakerDecoderImpl {
       const corner = activeCornerStack[activeCornerStackSize - 1]
       activeCornerStackSize--
 
-      const interiorFace = this._traversalDecoder.decodeStartFaceConfiguration()
+      const interiorFace = traversalDecoder.decodeStartFaceConfiguration()
 
       if (interiorFace) {
         if (numFacesDecoded >= this._cornerTable!.numFaces()) {
@@ -640,9 +662,9 @@ class MeshEdgebreakerDecoderImpl {
         cornerToVertex[newCorner + 2] = vertN
 
         // Mark all three vertices interior.
-        this._isVertHole[vertX] = 0
-        this._isVertHole[vertP] = 0
-        this._isVertHole[vertN] = 0
+        isVertHole[vertX] = 0
+        isVertHole[vertP] = 0
+        isVertHole[vertN] = 0
 
         this._initFaceConfigurations.push(true)
         this._initCorners.push(newCorner)
@@ -697,8 +719,8 @@ class MeshEdgebreakerDecoderImpl {
 
       this._cornerTable!._vertexCorners![invalidVert] = leftMostCorner(srcVert)
       this._cornerTable!._vertexCorners![srcVert] = -1
-      this._isVertHole[invalidVert] = this._isVertHole[srcVert]
-      this._isVertHole[srcVert] = 0
+      isVertHole[invalidVert] = isVertHole[srcVert]
+      isVertHole[srcVert] = 0
       numVertices--
     }
     return numVertices

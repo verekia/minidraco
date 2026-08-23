@@ -63,6 +63,9 @@ export const scratchInt32Filled = (size: number, value: number): Int32Array => {
   return view
 }
 
+// Exact-size view over a pooled buffer; contents are arbitrary.
+export const scratchUint8 = (size: number): Uint8Array => takeUint8(size)
+
 // Exact-size view over a pooled buffer, cleared to 0.
 export const scratchUint8Zeroed = (size: number): Uint8Array => {
   const view = takeUint8(size)

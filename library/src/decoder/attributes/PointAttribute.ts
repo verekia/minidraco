@@ -91,6 +91,20 @@ class PointAttribute extends GeometryAttribute {
     return true
   }
 
+  // Like reset(), but backs the attribute with decode-scoped scratch memory.
+  // Only valid for attributes that never escape the decode and whose every
+  // byte is written before it is read (see DataBuffer.adoptScratch).
+  resetScratch(numAttributeValues: number): boolean {
+    if (this._attributeBuffer === null) {
+      this._attributeBuffer = new DataBuffer()
+    }
+    const entrySize = dataTypeLength(this.dataType) * this.numComponents
+    this._attributeBuffer.adoptScratch(numAttributeValues * entrySize)
+    this.resetBuffer(this._attributeBuffer, entrySize, 0)
+    this._numUniqueEntries = numAttributeValues
+    return true
+  }
+
   get size(): number {
     return this._numUniqueEntries
   }

@@ -217,7 +217,10 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     )
     const portAtt = new PointAttribute(ga)
     portAtt.setIdentityMapping()
-    portAtt.reset(numEntries)
+    // Scratch-backed: the portable attribute is consumed by
+    // transformAttributeToOriginalFormat and dropped with the decode, and
+    // decodeIntegerValues writes every one of its entries below.
+    portAtt.resetScratch(numEntries)
     portAtt.uniqueId = this.attribute!.uniqueId
     this.setPortableAttribute(portAtt)
   }

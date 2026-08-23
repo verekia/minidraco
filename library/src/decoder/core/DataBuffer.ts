@@ -1,5 +1,7 @@
 // Ported from draco.js src/core/DataBuffer.js (MIT)
 
+import { scratchUint8 } from './ScratchArena'
+
 export class DataBuffer {
   _data: Uint8Array
 
@@ -25,6 +27,16 @@ export class DataBuffer {
 
   resize(newSize: number): void {
     this._resize(newSize)
+  }
+
+  // Replaces the contents with a decode-scoped scratch buffer of exactly
+  // `size` bytes; the previous contents are dropped and the new ones are
+  // arbitrary, so every byte must be written before it is read. Only for
+  // buffers that never outlive the decode (see ScratchArena) — the portable
+  // attributes the integer decoders build and discard per attribute are the
+  // one caller, and their per-primitive allocation showed up in profiles.
+  adoptScratch(size: number): void {
+    this._data = scratchUint8(size)
   }
 
   write(bytePos: number, inArray: Uint8Array | ArrayBufferView | ArrayBuffer, dataSize: number): void {
