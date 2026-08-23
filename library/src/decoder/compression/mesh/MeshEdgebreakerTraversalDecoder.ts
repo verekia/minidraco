@@ -4,6 +4,7 @@ import { DecoderBuffer } from '../../core/DecoderBuffer'
 import { RAnsBitDecoder } from '../bit_coders/RAnsBitDecoder'
 import { TOPOLOGY_C } from './MeshEdgebreakerShared'
 
+import type { BitDecoder } from '../../core/DecoderBuffer'
 import type { MeshEdgebreakerDecoderImpl } from './MeshEdgebreakerDecoderImpl'
 
 // Default traversal decoder: reads traversal data directly from a buffer.
@@ -14,6 +15,10 @@ class MeshEdgebreakerTraversalDecoder {
   _attributeConnectivityDecoders: RAnsBitDecoder[] | null
   _numAttributeData: number
   _decoderImpl: MeshEdgebreakerDecoderImpl | null
+  // _symbolBuffer's bit cursor, captured once bit decoding starts: decodeSymbol
+  // runs per decoded face and would otherwise reach it through two property
+  // loads and a method call per read.
+  _symbolBits: BitDecoder | null
 
   constructor() {
     this._buffer = new DecoderBuffer()
@@ -22,6 +27,7 @@ class MeshEdgebreakerTraversalDecoder {
     this._attributeConnectivityDecoders = null // Array of RAnsBitDecoder
     this._numAttributeData = 0
     this._decoderImpl = null
+    this._symbolBits = null
   }
 
   init(decoder: MeshEdgebreakerDecoderImpl): void {
@@ -62,6 +68,27 @@ class MeshEdgebreakerTraversalDecoder {
   }
 
   decodeSymbol(): number {
+    // A symbol is one bit, plus two more unless it is C -- three bits that
+    // always sit inside the same 32-bit window that getBits' fast path builds,
+    // so read them in one go when that path's five-byte margin is available.
+    const bd = this._symbolBits
+    if (bd !== null) {
+      const buf = bd._bitBuffer!
+      const off = bd._bitOffset
+      const byteOffset = off >> 3
+      if (byteOffset + 4 < bd._byteLength) {
+        const bits =
+          ((buf[byteOffset] | (buf[byteOffset + 1] << 8) | (buf[byteOffset + 2] << 16) | (buf[byteOffset + 3] << 24)) >>>
+            (off & 7)) &
+          7
+        if ((bits & 1) === TOPOLOGY_C) {
+          bd._bitOffset = off + 1
+          return TOPOLOGY_C
+        }
+        bd._bitOffset = off + 3
+        return bits
+      }
+    }
     let symbol = this._symbolBuffer.decodeLeastSignificantBits32(1)!
     if (symbol === TOPOLOGY_C) {
       return symbol
@@ -95,6 +122,7 @@ class MeshEdgebreakerTraversalDecoder {
     if (traversalSize === undefined) {
       return false
     }
+    this._symbolBits = this._symbolBuffer._bitDecoder
     // Advance the main buffer past the symbol data.
     this._buffer.init(
       this._symbolBuffer.dataHead,

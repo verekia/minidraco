@@ -156,9 +156,11 @@ class DepthFirstTraverser {
         const nextCornerId = cornerId === faceBase + 2 ? faceBase : cornerId + 1
         if (!isVertexVisited[vertId]) {
           // Inlined isOnBoundary
+          // An out-of-range vertex yields undefined here, and `undefined >= 0`
+          // is false, so the range check needs no separate guard.
           const lc: number | undefined = vertexLeftmost[vertId]
           let onBoundary = true
-          if (lc !== undefined && lc >= 0) {
+          if (lc! >= 0) {
             const nextLc = lc % 3 === 2 ? lc - 2 : lc + 1
             onBoundary = oppositeCorners[nextLc] < 0
           }

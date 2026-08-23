@@ -56,11 +56,18 @@ const takeUint32 = (size: number): Uint32Array => {
   return pooled.length === size ? pooled : pooled.subarray(0, size)
 }
 
+// Byte buffers back attribute storage that callers reinterpret as Int32 /
+// Float32 views over the whole underlying ArrayBuffer, which requires the
+// buffer's byte length to be a multiple of the element size -- so round every
+// pooled byte allocation up to 8.
+const byteCapacity = (size: number): number => (size < 8 ? 8 : (size + 7) & ~7)
+
 const takeUint8 = (size: number): Uint8Array => {
-  const k = sizeClass(size)
-  if (k > MAX_CLASS) return new Uint8Array(size)
+  const capacity = byteCapacity(size)
+  const k = sizeClass(capacity)
+  if (k > MAX_CLASS) return new Uint8Array(capacity)
   const bucket = freeUint8[k]
-  let pooled = bucket.length > 0 ? bucket.pop()! : new Uint8Array(size)
+  let pooled = bucket.length > 0 ? bucket.pop()! : new Uint8Array(capacity)
   if (pooled.length < size) pooled = new Uint8Array(1 << k)
   borrowedUint8.push(pooled)
   return pooled.length === size ? pooled : pooled.subarray(0, size)
