@@ -4,6 +4,10 @@
 // this suite decodes the whole local corpus keeping every Mesh alive, churns
 // the pool with further decodes, and only then reads the results back — a
 // buffer that escaped the decode would come back corrupted.
+//
+// Self-contained on purpose: this compares minidraco against itself, so unlike
+// the fidelity suites it needs neither reference decoder, and it keeps working
+// (and keeps guarding the arena) when only the bundle GLBs are at hand.
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 
