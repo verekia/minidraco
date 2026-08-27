@@ -12,11 +12,13 @@ import {
   kDracoMeshBitstreamVersionMajor,
   kDracoMeshBitstreamVersionMinor,
 } from '../config/CompressionShared'
+import { ransDecodeSymbolsPair } from '../entropy/ANSCoding'
 
 import type { PointAttribute } from '../../attributes/PointAttribute'
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
 import type { PointCloud } from '../../point_cloud/PointCloud'
 import type { AttributesDecoderInterface } from '../attributes/AttributesDecoderInterface'
+import type { PendingSymbolStream } from '../attributes/SequentialAttributeDecoder'
 import type { DecoderOptions } from '../config/DecoderOptions'
 
 // Abstract base for all point cloud and mesh decoders; holds shared logic.
@@ -253,8 +255,36 @@ class PointCloudDecoder {
   }
 
   decodeAllAttributes(): boolean {
-    for (let i = 0; i < this._attributesDecoders.length; i++) {
-      if (!this._attributesDecoders[i]!.decodeAttributes(this._buffer!)) {
+    // Three phases instead of running each attributes decoder to completion:
+    // parse everything (all cursor movement is size-driven, so the raw rANS
+    // symbol decodes can be deferred), decode the deferred streams two at a
+    // time -- independent streams interleaved in one lockstep loop overlap
+    // their serial per-symbol dependency chains, which is where a lone rANS
+    // decode is latency-bound -- then finish each decoder in order. Output is
+    // bit-identical to the sequential decode.
+    const decoders = this._attributesDecoders
+    for (let i = 0; i < decoders.length; i++) {
+      if (!decoders[i]!.decodeAttributesParse(this._buffer!)) {
+        return false
+      }
+    }
+
+    const pending: PendingSymbolStream[] = []
+    for (let i = 0; i < decoders.length; i++) {
+      decoders[i]!.collectPendingSymbolStreams(pending)
+    }
+    let i = 0
+    for (; i + 1 < pending.length; i += 2) {
+      const a = pending[i]
+      const b = pending[i + 1]
+      ransDecodeSymbolsPair(a.ans, a.out, a.count, b.ans, b.out, b.count)
+    }
+    if (i < pending.length) {
+      pending[i].ans.decodeSymbols(pending[i].out, pending[i].count)
+    }
+
+    for (let k = 0; k < decoders.length; k++) {
+      if (!decoders[k]!.decodeAttributesFinish()) {
         return false
       }
     }

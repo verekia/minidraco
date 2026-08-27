@@ -4,14 +4,16 @@ import { GeometryAttribute } from '../../attributes/GeometryAttribute'
 import { PointAttribute } from '../../attributes/PointAttribute'
 import { convertSymbolsToSignedInts } from '../../core/BitUtils'
 import { DataType, dataTypeLength } from '../../core/DracoTypes'
-import { PredictionSchemeMethod, PredictionSchemeTransformType } from '../config/CompressionShared'
-import { decodeSymbols } from '../entropy/SymbolDecoding'
+import { PredictionSchemeMethod, PredictionSchemeTransformType, SymbolCodingMethod } from '../config/CompressionShared'
+import { decodeTaggedSymbols, parseRawSymbolStream } from '../entropy/SymbolDecoding'
 import { createPredictionSchemeForDecoder } from './prediction_schemes/PredictionSchemeDecoderFactory'
 import { PredictionSchemeWrapDecodingTransform } from './prediction_schemes/PredictionSchemeWrapDecodingTransform'
 import { SequentialAttributeDecoder } from './SequentialAttributeDecoder'
 
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
+import type { RAnsSymbolDecoder } from '../entropy/RAnsSymbolDecoder'
 import type { PredictionSchemeDecoderInterface } from './prediction_schemes/PredictionSchemeDecoderInterface'
+import type { PendingSymbolStream } from './SequentialAttributeDecoder'
 
 type IntTypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array
 
@@ -20,17 +22,55 @@ type IntTypedArrayConstructor = new (buffer: ArrayBufferLike, byteOffset: number
 // Decoder for attributes encoded with the SequentialIntegerAttributeEncoder.
 class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
   _predictionScheme: PredictionSchemeDecoderInterface | null
+  // Two-phase decode state (see SequentialAttributeDecoder): the parse phase
+  // stashes the primed raw-symbol stream here so the controller can batch and
+  // pair several attributes' decodes; the finish phase consumes it.
+  _pendingSymbolDecoder: RAnsSymbolDecoder | null
+  _pendingNumValues: number
+  _finishPointIds: Int32Array | null
 
   constructor() {
     super()
     this._predictionScheme = null
+    this._pendingSymbolDecoder = null
+    this._pendingNumValues = 0
+    this._finishPointIds = null
   }
 
-  override transformAttributeToOriginalFormat(pointIds: Int32Array): boolean {
-    return this._storeValues(pointIds.length)
+  // --- Two-phase decode (parse headers / batch symbol decode / finish) ---
+
+  override decodePortableAttributeParse(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+    if (this.attribute!.numComponents <= 0) {
+      return false
+    }
+    if (!this.attribute!.reset(pointIds.length)) {
+      return false
+    }
+    this._finishPointIds = pointIds
+    return this._decodeValuesParse(pointIds, buffer)
   }
 
-  override decodeValues(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+  override pendingSymbolStream(): PendingSymbolStream | null {
+    if (this._pendingSymbolDecoder === null) {
+      return null
+    }
+    const portableAttributeData = this.getPortableAttributeData()!
+    return {
+      ans: this._pendingSymbolDecoder.ans_,
+      out: new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, this._pendingNumValues),
+      count: this._pendingNumValues,
+    }
+  }
+
+  override decodePortableAttributeFinish(): boolean {
+    if (this._pendingSymbolDecoder !== null) {
+      this._pendingSymbolDecoder.endDecoding()
+      this._pendingSymbolDecoder = null
+    }
+    return this._finishIntegerValues(this._finishPointIds!)
+  }
+
+  _decodeValuesParse(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
     const predictionSchemeMethod = buffer.decodeInt8()
     if (predictionSchemeMethod === undefined) return false
 
@@ -61,13 +101,6 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
       }
     }
 
-    if (!this.decodeIntegerValues(pointIds, buffer)) {
-      return false
-    }
-    return true
-  }
-
-  decodeIntegerValues(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
     const numComponents = this.getNumValueComponents()
     if (numComponents <= 0) {
       return false
@@ -84,10 +117,28 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     if (compressed === undefined) return false
 
     if (compressed > 0) {
-      // decodeSymbols writes uint32 values into the provided array.
-      const outUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
-      if (!decodeSymbols(numValues, numComponents, buffer, outUint32)) {
-        return false
+      if (numValues > 0) {
+        const scheme = buffer.decodeUint8()
+        if (scheme === SymbolCodingMethod.SYMBOL_CODING_RAW) {
+          // Defer the actual rANS decode: the headers fix the byte range, so
+          // the cursor moves on and the controller pairs this stream with a
+          // sibling attribute's for a lockstep decode.
+          const decoder = parseRawSymbolStream(numValues, buffer)
+          if (decoder === null) {
+            return false
+          }
+          this._pendingSymbolDecoder = decoder
+          this._pendingNumValues = numValues
+        } else if (scheme === SymbolCodingMethod.SYMBOL_CODING_TAGGED) {
+          // A tagged stream's cursor advance depends on the decoded tags, so
+          // it cannot be deferred -- decode it on the spot.
+          const outUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
+          if (!decodeTaggedSymbols(numValues, numComponents, buffer, outUint32)) {
+            return false
+          }
+        } else {
+          return false
+        }
       }
     } else {
       const numBytes = buffer.decodeUint8()
@@ -121,13 +172,29 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
       }
     }
 
-    const needsZigzag =
-      numValues > 0 && (this._predictionScheme === null || !this._predictionScheme.areCorrectionsPositive())
-
+    // Prediction data sits after the symbol stream and its parse is
+    // size-driven, so it too runs ahead of the deferred symbol decode.
     if (this._predictionScheme) {
       if (!this._predictionScheme.decodePredictionData(buffer)) {
         return false
       }
+    }
+    return true
+  }
+
+  // The post-symbol tail of the decode: zigzag unpacking and prediction.
+  _finishIntegerValues(pointIds: Int32Array): boolean {
+    const numComponents = this.getNumValueComponents()
+    const numValues = pointIds.length * numComponents
+    const portableAttributeData = this.getPortableAttributeData()
+    if (portableAttributeData === null) {
+      return false
+    }
+
+    const needsZigzag =
+      numValues > 0 && (this._predictionScheme === null || !this._predictionScheme.areCorrectionsPositive())
+
+    if (this._predictionScheme) {
       if (numValues > 0) {
         // Prefer the zigzag-fused decode: it unpacks each correction inline
         // instead of paying a separate whole-array conversion pass first.
@@ -165,6 +232,30 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
       convertSymbolsToSignedInts(asUint32, numValues, portableAttributeData)
     }
     return true
+  }
+
+  override transformAttributeToOriginalFormat(pointIds: Int32Array): boolean {
+    return this._storeValues(pointIds.length)
+  }
+
+  // Single-phase entry (base-class decodePortableAttribute path): parse,
+  // decode any deferred symbol stream immediately, finish.
+  override decodeValues(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+    this._finishPointIds = pointIds
+    if (!this._decodeValuesParse(pointIds, buffer)) {
+      return false
+    }
+    const pending = this._pendingSymbolDecoder
+    if (pending !== null) {
+      const portableAttributeData = this.getPortableAttributeData()!
+      const outUint32 = new Uint32Array(
+        portableAttributeData.buffer,
+        portableAttributeData.byteOffset,
+        this._pendingNumValues,
+      )
+      pending.ans_.decodeSymbols(outUint32, this._pendingNumValues)
+    }
+    return this.decodePortableAttributeFinish()
   }
 
   // Prediction scheme for decoding integer values; subclasses override for others.
