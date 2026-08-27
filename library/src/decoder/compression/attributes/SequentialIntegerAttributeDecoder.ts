@@ -121,17 +121,32 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
       }
     }
 
-    if (numValues > 0 && (this._predictionScheme === null || !this._predictionScheme.areCorrectionsPositive())) {
-      // Reinterpret the Int32Array as Uint32 for the signed conversion.
-      const asUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
-      convertSymbolsToSignedInts(asUint32, numValues, portableAttributeData)
-    }
+    const needsZigzag =
+      numValues > 0 && (this._predictionScheme === null || !this._predictionScheme.areCorrectionsPositive())
 
     if (this._predictionScheme) {
       if (!this._predictionScheme.decodePredictionData(buffer)) {
         return false
       }
       if (numValues > 0) {
+        // Prefer the zigzag-fused decode: it unpacks each correction inline
+        // instead of paying a separate whole-array conversion pass first.
+        if (needsZigzag) {
+          const fused = this._predictionScheme.computeOriginalValuesZigzag(
+            portableAttributeData,
+            portableAttributeData,
+            numValues,
+            numComponents,
+            pointIds,
+          )
+          if (fused !== undefined) {
+            return fused
+          }
+        }
+        if (needsZigzag) {
+          const asUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
+          convertSymbolsToSignedInts(asUint32, numValues, portableAttributeData)
+        }
         if (
           !this._predictionScheme.computeOriginalValues(
             portableAttributeData,
@@ -144,6 +159,10 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
           return false
         }
       }
+    } else if (needsZigzag) {
+      // Reinterpret the Int32Array as Uint32 for the signed conversion.
+      const asUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
+      convertSymbolsToSignedInts(asUint32, numValues, portableAttributeData)
     }
     return true
   }

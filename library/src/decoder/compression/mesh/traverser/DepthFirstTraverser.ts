@@ -71,7 +71,10 @@ class DepthFirstTraverser {
   onTraversalStart(): void {
     const cornerTable = this._cornerTable!
     this._isFaceVisited = scratchUint8Zeroed(cornerTable.numFaces())
-    this._isVertexVisited = scratchUint8Zeroed(cornerTable.numVertices())
+    // No separate vertex-visited flags: the observer's vertexToEncodedMap is
+    // -1-filled by MeshAttributeIndicesEncodingData.init and every visit
+    // assigns a value index >= 0, so its sign doubles as the visited flag --
+    // one fewer random-access array in the hottest loop.
     this._cornerTraversalStack = scratchInt32(this._numCorners)
   }
 
@@ -83,7 +86,6 @@ class DepthFirstTraverser {
     }
 
     const isFaceVisited = this._isFaceVisited!
-    const isVertexVisited = this._isVertexVisited!
     const observer = this._observer!
     const cornerToVertex = this._cornerToVertex!
     const oppositeCorners = this._oppositeCorners!
@@ -114,14 +116,12 @@ class DepthFirstTraverser {
     if (nextVert === kInvalidVertexIndex || prevVert === kInvalidVertexIndex) {
       return false
     }
-    if (!isVertexVisited[nextVert]) {
-      isVertexVisited[nextVert] = 1
+    if (vertexToEncodedMap[nextVert] < 0) {
       outPointIds[numOutPoints++] = obsFaces[nextCorner]
       encodedToCornerMap[numValues] = nextCorner
       vertexToEncodedMap[nextVert] = numValues++
     }
-    if (!isVertexVisited[prevVert]) {
-      isVertexVisited[prevVert] = 1
+    if (vertexToEncodedMap[prevVert] < 0) {
       outPointIds[numOutPoints++] = obsFaces[prevCorner]
       encodedToCornerMap[numValues] = prevCorner
       vertexToEncodedMap[prevVert] = numValues++
@@ -154,7 +154,7 @@ class DepthFirstTraverser {
         }
         const faceBase = faceId * 3
         const nextCornerId = cornerId === faceBase + 2 ? faceBase : cornerId + 1
-        if (!isVertexVisited[vertId]) {
+        if (vertexToEncodedMap[vertId] < 0) {
           // Inlined isOnBoundary
           // An out-of-range vertex yields undefined here, and `undefined >= 0`
           // is false, so the range check needs no separate guard.
@@ -164,7 +164,6 @@ class DepthFirstTraverser {
             const nextLc = lc % 3 === 2 ? lc - 2 : lc + 1
             onBoundary = oppositeCorners[nextLc] < 0
           }
-          isVertexVisited[vertId] = 1
           outPointIds[numOutPoints++] = obsFaces[cornerId]
           encodedToCornerMap[numValues] = cornerId
           vertexToEncodedMap[vertId] = numValues++

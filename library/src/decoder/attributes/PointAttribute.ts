@@ -159,6 +159,14 @@ class PointAttribute extends GeometryAttribute {
     this._indicesMap = new Uint32Array(numPoints)
   }
 
+  // Adopts an already-computed map, shared with other attributes of the same
+  // mesh. The map must be treated as read-only from here on (reads go through
+  // mappedIndex/extractTo; copyFrom slices).
+  setExplicitMappingShared(map: Uint32Array): void {
+    this._identityMapping = false
+    this._indicesMap = map
+  }
+
   // Like setExplicitMappingUnfilled, but from decode-scoped scratch. Only for
   // attributes that never escape the decode (see ScratchArena) -- the portable
   // attributes the sequential decoders build and discard.

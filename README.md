@@ -45,12 +45,12 @@ Median across a 19-model corpus vs [draco.js](https://github.com/mrdoob/draco.js
 
 | benchmark                                     | vs draco.js     | vs draco3d wasm |
 | --------------------------------------------- | --------------- | --------------- |
-| single-threaded decode — bun (JSC)            | 🟢 1.19× faster | 🟢 1.21× faster |
-| single-threaded decode — Chrome (V8)          | 🟢 1.21× faster | ⚪ even         |
-| `GLTFLoader.parse`, worker pool — Chrome (V8) | 🟢 1.46× faster | 🔴 1.06× slower |
+| single-threaded decode — bun (JSC)            | 🟢 1.18× faster | 🟢 1.25× faster |
+| single-threaded decode — Chrome (V8)          | 🟢 1.21× faster | 🟢 1.05× faster |
+| `GLTFLoader.parse`, worker pool — Chrome (V8) | 🟢 1.58× faster | ⚪ even         |
 
-Faster than draco.js across the corpus, ahead of or even with the wasm decoder single-threaded,
-and competitive in a real `GLTFLoader.parse` with the main thread left free.
+Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and even with
+it in a real `GLTFLoader.parse` with the main thread left free.
 
 🟢 There's no `draco_decoder.wasm` to fetch and compile before the first decode, so minidraco (and draco.js) often beat the wasm decoder on first load (not reflected on the benchmark).
 
