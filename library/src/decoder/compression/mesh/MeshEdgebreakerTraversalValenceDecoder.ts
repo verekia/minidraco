@@ -3,7 +3,7 @@
 import { scratchInt32Filled, scratchUint32 } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { SymbolCodingMethod } from '../config/CompressionShared'
-import { ransDecodeSymbolsPairU8 } from '../entropy/ANSCoding'
+import { ransDecodeSymbolsPairU8, ransDecodeSymbolsTrioU8 } from '../entropy/ANSCoding'
 import { RAnsSymbolDecoder } from '../entropy/RAnsSymbolDecoder'
 import { decodeTaggedSymbols } from '../entropy/SymbolDecoding'
 import {
@@ -149,20 +149,37 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
       }
     }
 
-    // Decode in pairs; an odd leftover (or a non-Uint8 lut) decodes alone.
+    // Decode three streams in lockstep while possible (the six contexts make
+    // two clean trios), then pairs, then a lone leftover; non-Uint8 luts
+    // (never produced for these alphabets) decode alone.
+    const allU8 = pending.every(entry => entry.decoder.ans_.lutTable instanceof Uint8Array)
     let p = 0
-    while (p + 1 < pending.length) {
-      const a = pending[p]
-      const b = pending[p + 1]
-      if (a.decoder.ans_.lutTable instanceof Uint8Array && b.decoder.ans_.lutTable instanceof Uint8Array) {
-        ransDecodeSymbolsPairU8(a.decoder.ans_, a.out, a.count, b.decoder.ans_, b.out, b.count)
-      } else {
-        a.decoder.ans_.decodeSymbols(a.out, a.count)
-        b.decoder.ans_.decodeSymbols(b.out, b.count)
+    if (allU8) {
+      while (pending.length - p >= 3) {
+        const a = pending[p]
+        const b = pending[p + 1]
+        const c = pending[p + 2]
+        ransDecodeSymbolsTrioU8(
+          a.decoder.ans_,
+          a.out,
+          a.count,
+          b.decoder.ans_,
+          b.out,
+          b.count,
+          c.decoder.ans_,
+          c.out,
+          c.count,
+        )
+        p += 3
       }
-      p += 2
+      if (pending.length - p === 2) {
+        const a = pending[p]
+        const b = pending[p + 1]
+        ransDecodeSymbolsPairU8(a.decoder.ans_, a.out, a.count, b.decoder.ans_, b.out, b.count)
+        p += 2
+      }
     }
-    if (p < pending.length) {
+    for (; p < pending.length; ++p) {
       pending[p].decoder.ans_.decodeSymbols(pending[p].out, pending[p].count)
     }
     for (const entry of pending) {
