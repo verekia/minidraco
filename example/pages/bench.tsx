@@ -17,10 +17,7 @@ import {
 
 import type { RawPrimitive } from '../lib/raw-bench'
 
-const BUNDLE_MODELS = [
-  { name: 'manablade-characters.glb', url: '/models/manablade-characters.glb' },
-  { name: 'manablade-static.glb', url: '/models/manablade-static.glb' },
-]
+const BUNDLE_MODELS = [{ name: 'manablade-bundle.glb', url: '/models/manablade-bundle.glb' }]
 
 const LOADER_WARMUP_RUNS = 1
 const LOADER_TIMED_RUNS = 5
@@ -76,8 +73,8 @@ const CorpusNote = ({ sampleCount, glbOnly }: { sampleCount: number | null; glbO
     {sampleCount === null
       ? 'Checking for sample models…'
       : sampleCount > 0
-        ? `Corpus: 3 bundles + ${sampleCount} draco.js sample models${glbOnly ? ' (GLBs only)' : ''} (local dev only).`
-        : 'Corpus: 3 bundles. Sample models are not deployed — run `bun dev` locally to include them.'}
+        ? `Corpus: the production bundle + ${sampleCount} draco.js sample models${glbOnly ? ' (GLBs only)' : ''} (local dev only).`
+        : 'Corpus: the production bundle. Sample models are not deployed — run `bun dev` locally to include them.'}
   </p>
 )
 

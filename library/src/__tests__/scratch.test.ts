@@ -93,8 +93,7 @@ const snapshot = (mesh: Mesh): number[] => {
 
 const fixturesDir = `${import.meta.dir}/fixtures`
 const corpus = [
-  `${import.meta.dir}/../../../example/public/models/manablade-characters.glb`,
-  `${import.meta.dir}/../../../example/public/models/manablade-static.glb`,
+  `${import.meta.dir}/../../../example/public/models/manablade-bundle.glb`,
   ...readdirSync(fixturesDir)
     .filter(name => name.endsWith('.drc'))
     .toSorted()

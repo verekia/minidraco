@@ -271,10 +271,7 @@ const draco3dTypeInfo = (m: any, dataType: number, numValues: number) => {
   }
 }
 
-export const BUNDLE_GLBS = [
-  `${import.meta.dir}/../../example/public/models/manablade-characters.glb`,
-  `${import.meta.dir}/../../example/public/models/manablade-static.glb`,
-]
+export const BUNDLE_GLBS = [`${import.meta.dir}/../../example/public/models/manablade-bundle.glb`]
 
 // draco.js ships its sample models inside the package (pinned by commit in
 // package.json), so they are used straight from node_modules instead of being

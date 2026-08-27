@@ -39,15 +39,15 @@ const mesh = decodeDracoMesh(new Uint8Array(bytes))
 
 ## Performance
 
-Median across a 19-model corpus vs [draco.js](https://github.com/mrdoob/draco.js) and the official
+Median across an 18-model corpus vs [draco.js](https://github.com/mrdoob/draco.js) and the official
 [draco3d](https://www.npmjs.com/package/draco3d) wasm decoder (full results in
 [BENCH.md](https://github.com/verekia/minidraco/blob/main/BENCH.md)):
 
 | benchmark                                     | vs draco.js     | vs draco3d wasm |
 | --------------------------------------------- | --------------- | --------------- |
-| single-threaded decode — bun (JSC)            | 🟢 1.23× faster | 🟢 1.31× faster |
-| single-threaded decode — Chrome (V8)          | 🟢 1.23× faster | 🟢 1.09× faster |
-| `GLTFLoader.parse`, worker pool — Chrome (V8) | 🟢 1.35× faster | 🔴 1.08× slower |
+| single-threaded decode — bun (JSC)            | 🟢 1.23× faster | 🟢 1.32× faster |
+| single-threaded decode — Chrome (V8)          | 🟢 1.26× faster | 🟢 1.06× faster |
+| `GLTFLoader.parse`, worker pool — Chrome (V8) | 🟢 1.46× faster | 🔴 1.05× slower |
 
 Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and
 competitive in a real `GLTFLoader.parse` with the main thread left free.
