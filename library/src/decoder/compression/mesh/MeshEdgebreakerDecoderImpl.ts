@@ -385,6 +385,9 @@ class MeshEdgebreakerDecoderImpl {
     const activeCornerStack = scratchInt32(numSymbols + this._topologySplitData.length + 16)
     let activeCornerStackSize = 0
     const topologySplitActiveCorners = new Map<number, number>()
+    // Reused across symbols: R/L/E symbols check for topology splits, and a
+    // fresh result object per check was an allocation in the hot loop.
+    const splitResult: TopologySplitResult = { faceEdge: 0, encoderSplitSymbolId: 0 }
     const invalidVertices: number[] = []
     const removeInvalidVertices = this._attributeData.length === 0
 
@@ -397,26 +400,6 @@ class MeshEdgebreakerDecoderImpl {
     // showed up in profiles. All corners written below are fresh (>= 0).
     const cornerToVertex = this._cornerTable!._cornerToVertex!
     const oppositeCorners = this._cornerTable!._oppositeCorners!
-    const numCorners = this._cornerTable!.numCorners()
-
-    // Inlinable accessors that handle negative indices and avoid polymorphic dispatch.
-    const next = (c: number): number => (c < 0 ? -1 : c % 3 === 2 ? c - 2 : c + 1)
-    const prev = (c: number): number => (c < 0 ? -1 : c % 3 === 0 ? c + 2 : c - 1)
-    const vertex = (c: number): number => (c < 0 || c >= numCorners ? -1 : cornerToVertex[c])
-    const opposite = (c: number): number => (c < 0 || c >= numCorners ? -1 : oppositeCorners[c])
-    const leftMostCorner = (v: number): number =>
-      v < 0 || v >= this._cornerTable!._vertexCorners!.length ? -1 : this._cornerTable!._vertexCorners![v]
-
-    const swingLeft = (c: number): number => {
-      const n = next(c)
-      const o = opposite(n)
-      return o < 0 ? -1 : next(o)
-    }
-    const swingRight = (c: number): number => {
-      const p = prev(c)
-      const o = opposite(p)
-      return o < 0 ? -1 : prev(o)
-    }
 
     // Hot loop: accessors are inlined as flat-array reads + corner-triple
     // arithmetic rather than calling the helpers above. _decodeConnectivity
@@ -611,9 +594,8 @@ class MeshEdgebreakerDecoderImpl {
 
       traversalDecoder.newActiveCornerReached(activeCornerStack[activeCornerStackSize - 1])
 
-      if (checkTopologySplit) {
+      if (checkTopologySplit && this._topologySplitData.length > 0) {
         const encoderSymbolId = numSymbols - symbolId - 1
-        const splitResult: TopologySplitResult = { faceEdge: 0, encoderSplitSymbolId: 0 }
         while (this._isTopologySplit(encoderSymbolId, splitResult)) {
           if (splitResult.encoderSplitSymbolId < 0) return -1
 
@@ -637,6 +619,42 @@ class MeshEdgebreakerDecoderImpl {
       return -1
     }
 
+    // The start-face reconstruction and invalid-vertex cleanup run once per
+    // primitive over a handful of entries — cold next to the symbol loop
+    // above. They live in their own methods so this function's bytecode stays
+    // small enough for the engines' optimizing tiers (JavaScriptCore refuses
+    // to fully optimize oversized functions; see the round-2 valence-inline
+    // revert), which also leaves the JITs room to inline the traversal
+    // decoder's per-symbol calls here.
+    numFacesDecoded = this._decodeStartFaces(activeCornerStack, activeCornerStackSize, numFacesDecoded)
+    if (numFacesDecoded === -1) {
+      return -1
+    }
+
+    if (numFacesDecoded !== this._cornerTable!.numFaces()) {
+      return -1
+    }
+
+    return this._removeInvalidVertices(invalidVertices)
+  }
+
+  // Connects the remaining active-stack corners to newly decoded start faces.
+  // Returns the updated decoded-face count, or -1 on malformed input.
+  _decodeStartFaces(activeCornerStack: Int32Array, activeCornerStackSize: number, numFacesDecoded: number): number {
+    const ct = this._cornerTable!
+    const cornerToVertex = ct._cornerToVertex!
+    const oppositeCorners = ct._oppositeCorners!
+    const vertexCorners = ct._vertexCorners!
+    const isVertHole = this._isVertHole
+    const traversalDecoder = this._traversalDecoder
+    const numCorners = ct.numCorners()
+    const numFaces = ct.numFaces()
+
+    const next = (c: number): number => (c < 0 ? -1 : c % 3 === 2 ? c - 2 : c + 1)
+    const vertex = (c: number): number => (c < 0 || c >= numCorners ? -1 : cornerToVertex[c])
+    const opposite = (c: number): number => (c < 0 || c >= numCorners ? -1 : oppositeCorners[c])
+    const leftMostCorner = (v: number): number => (v < 0 || v >= vertexCorners.length ? -1 : vertexCorners[v])
+
     // Decode start faces and connect them to the faces from the active stack.
     while (activeCornerStackSize > 0) {
       const corner = activeCornerStack[activeCornerStackSize - 1]
@@ -645,7 +663,7 @@ class MeshEdgebreakerDecoderImpl {
       const interiorFace = traversalDecoder.decodeStartFaceConfiguration()
 
       if (interiorFace) {
-        if (numFacesDecoded >= this._cornerTable!.numFaces()) {
+        if (numFacesDecoded >= numFaces) {
           return -1
         }
 
@@ -696,14 +714,37 @@ class MeshEdgebreakerDecoderImpl {
       }
     }
 
-    if (numFacesDecoded !== this._cornerTable!.numFaces()) {
-      return -1
+    return numFacesDecoded
+  }
+
+  // Removes invalid (isolated) vertices by swapping them with the last valid
+  // vertex in the table, matching C++ mesh_edgebreaker_decoder_impl.cc (the
+  // forward iteration order matters). Returns the final vertex count, or -1.
+  _removeInvalidVertices(invalidVertices: number[]): number {
+    const ct = this._cornerTable!
+    const cornerToVertex = ct._cornerToVertex!
+    const oppositeCorners = ct._oppositeCorners!
+    const vertexCorners = ct._vertexCorners!
+    const isVertHole = this._isVertHole
+    const numCorners = ct.numCorners()
+
+    const next = (c: number): number => (c < 0 ? -1 : c % 3 === 2 ? c - 2 : c + 1)
+    const prev = (c: number): number => (c < 0 ? -1 : c % 3 === 0 ? c + 2 : c - 1)
+    const vertex = (c: number): number => (c < 0 || c >= numCorners ? -1 : cornerToVertex[c])
+    const opposite = (c: number): number => (c < 0 || c >= numCorners ? -1 : oppositeCorners[c])
+    const leftMostCorner = (v: number): number => (v < 0 || v >= vertexCorners.length ? -1 : vertexCorners[v])
+    const swingLeft = (c: number): number => {
+      const n = next(c)
+      const o = opposite(n)
+      return o < 0 ? -1 : next(o)
+    }
+    const swingRight = (c: number): number => {
+      const p = prev(c)
+      const o = opposite(p)
+      return o < 0 ? -1 : prev(o)
     }
 
-    let numVertices = this._cornerTable!.numVertices()
-    // Remove invalid (isolated) vertices by swapping them with the last valid
-    // vertex in the table. Matches C++ mesh_edgebreaker_decoder_impl.cc.
-    // Must iterate forward (not reverse) to match C++ iteration order.
+    let numVertices = ct.numVertices()
     for (let ivIdx = 0; ivIdx < invalidVertices.length; ++ivIdx) {
       const invalidVert = invalidVertices[ivIdx]
       let srcVert = numVertices - 1
@@ -738,8 +779,8 @@ class MeshEdgebreakerDecoderImpl {
         }
       }
 
-      this._cornerTable!._vertexCorners![invalidVert] = leftMostCorner(srcVert)
-      this._cornerTable!._vertexCorners![srcVert] = -1
+      vertexCorners[invalidVert] = leftMostCorner(srcVert)
+      vertexCorners[srcVert] = -1
       isVertHole[invalidVert] = isVertHole[srcVert]
       isVertHole[srcVert] = 0
       numVertices--
