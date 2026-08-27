@@ -47,23 +47,61 @@ function decodeTaggedSymbols(
     return false
   }
 
-  srcBuffer.startBitDecoding(false)
-  // After startBitDecoding(false) the buffer is in bit mode, so getBits can be
-  // called directly, skipping decodeLeastSignificantBits32's per-component dispatch.
-  const bd = srcBuffer._bitDecoder
-  // tagDecoder.decodeSymbol() is just a delegation to ans_.ransRead(); hoist it.
   const tagAns = tagDecoder.ans_
+
+  srcBuffer.startBitDecoding(false)
+  // After startBitDecoding(false) the buffer is in bit mode; read the bits
+  // straight out of the bit decoder's state rather than through getBits(),
+  // which reloads all three of its fields per component.
+  const bd = srcBuffer._bitDecoder
+  const buf = bd._bitBuffer!
+  const byteLength = bd._byteLength
+  let bitOffset = bd._bitOffset
   let valueId = 0
   for (let i = 0; i < numValues; i += numComponents) {
     const bitLength = tagAns.ransRead()
-    for (let j = 0; j < numComponents; ++j) {
-      const val = bd.getBits(bitLength)
-      if (val === undefined) {
-        return false
+    // getBits' fast path needs 5 readable bytes and a mask that fits in 31
+    // bits; anything else (a wide or out-of-range tag, the tail of the buffer)
+    // falls back to it, which also produces the undefined that ends the decode.
+    if (bitLength < 32) {
+      const mask = (1 << bitLength) - 1
+      let j = 0
+      for (; j < numComponents; ++j) {
+        const byteOffset = bitOffset >> 3
+        if (byteOffset + 4 >= byteLength) break
+        const bitShift = bitOffset & 7
+        let value =
+          (buf[byteOffset] | (buf[byteOffset + 1] << 8) | (buf[byteOffset + 2] << 16) | (buf[byteOffset + 3] << 24)) >>>
+          bitShift
+        if (bitLength > 32 - bitShift) {
+          value = (value | (buf[byteOffset + 4] << (32 - bitShift))) >>> 0
+        }
+        bitOffset += bitLength
+        outValues[valueId++] = value & mask
       }
-      outValues[valueId++] = val
+      if (j === numComponents) continue
+      bd._bitOffset = bitOffset
+      for (; j < numComponents; ++j) {
+        const val = bd.getBits(bitLength)
+        if (val === undefined) {
+          return false
+        }
+        outValues[valueId++] = val
+      }
+      bitOffset = bd._bitOffset
+    } else {
+      bd._bitOffset = bitOffset
+      for (let j = 0; j < numComponents; ++j) {
+        const val = bd.getBits(bitLength)
+        if (val === undefined) {
+          return false
+        }
+        outValues[valueId++] = val
+      }
+      bitOffset = bd._bitOffset
     }
   }
+  bd._bitOffset = bitOffset
   tagDecoder.endDecoding()
   srcBuffer.endBitDecoding()
   return true

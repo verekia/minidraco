@@ -1,5 +1,7 @@
 // Ported from draco.js src/compression/mesh/traverser/MeshTraversalSequencer.js (MIT)
 
+import { scratchInt32 } from '../../../core/ScratchArena'
+
 import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { Mesh } from '../../../mesh/Mesh'
 import type { MeshAttributeIndicesEncodingData } from '../MeshEdgebreakerDecoderImpl'
@@ -136,7 +138,11 @@ class MeshTraversalSequencer {
 
   _generateSequenceInternal(): boolean {
     this._numOutPoints = 0
-    this._outPointIds = new Int32Array(this._mesh.numPoints())
+    // Decode-scoped scratch: the point sequence feeds this primitive's
+    // attribute decoders (and the per-decode traversal cache) and is dropped
+    // when the decode ends. Entries are written before they are read, so the
+    // pooled buffer's stale contents are never observed.
+    this._outPointIds = scratchInt32(this._mesh.numPoints())
 
     this._traverser!.onTraversalStart()
     const numFaces = this._traverser!.cornerTable()!.numFaces()

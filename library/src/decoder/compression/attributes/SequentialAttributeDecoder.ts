@@ -54,7 +54,7 @@ class SequentialAttributeDecoder {
     // mappedIndex()/setPointMapEntry() calls.
     if (!this._attribute!.isMappingIdentity && this._portableAttribute && this._portableAttribute.isMappingIdentity) {
       const size = this._attribute!.indicesMapSize
-      this._portableAttribute.setExplicitMappingUnfilled(size) // dst.set() below writes every entry
+      this._portableAttribute.setExplicitMappingScratch(size) // dst.set() below writes every entry
       const src = this._attribute!.indicesMap as Uint32Array
       const dst = this._portableAttribute.indicesMap as Uint32Array
       if (src.length === size) {

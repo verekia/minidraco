@@ -2,6 +2,7 @@
 
 import { DataBuffer } from '../core/DataBuffer'
 import { DataType, dataTypeLength } from '../core/DracoTypes'
+import { scratchUint32 } from '../core/ScratchArena'
 import { GeometryAttribute } from './GeometryAttribute'
 import { kInvalidAttributeValueIndex } from './GeometryIndices'
 
@@ -91,6 +92,20 @@ class PointAttribute extends GeometryAttribute {
     return true
   }
 
+  // Like reset(), but backs the attribute with decode-scoped scratch memory.
+  // Only valid for attributes that never escape the decode and whose every
+  // byte is written before it is read (see DataBuffer.adoptScratch).
+  resetScratch(numAttributeValues: number): boolean {
+    if (this._attributeBuffer === null) {
+      this._attributeBuffer = new DataBuffer()
+    }
+    const entrySize = dataTypeLength(this.dataType) * this.numComponents
+    this._attributeBuffer.adoptScratch(numAttributeValues * entrySize)
+    this.resetBuffer(this._attributeBuffer, entrySize, 0)
+    this._numUniqueEntries = numAttributeValues
+    return true
+  }
+
   get size(): number {
     return this._numUniqueEntries
   }
@@ -142,6 +157,14 @@ class PointAttribute extends GeometryAttribute {
   setExplicitMappingUnfilled(numPoints: number): void {
     this._identityMapping = false
     this._indicesMap = new Uint32Array(numPoints)
+  }
+
+  // Like setExplicitMappingUnfilled, but from decode-scoped scratch. Only for
+  // attributes that never escape the decode (see ScratchArena) -- the portable
+  // attributes the sequential decoders build and discard.
+  setExplicitMappingScratch(numPoints: number): void {
+    this._identityMapping = false
+    this._indicesMap = scratchUint32(numPoints)
   }
 
   setAttributeTransformData(transformData: AttributeTransformData): void {

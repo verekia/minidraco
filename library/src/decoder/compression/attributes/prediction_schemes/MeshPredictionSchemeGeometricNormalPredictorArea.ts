@@ -3,6 +3,7 @@
 // and mesh_prediction_scheme_geometric_normal_predictor_base.h)
 
 import { DataType } from '../../../core/DracoTypes'
+import { scratchInt32 } from '../../../core/ScratchArena'
 import { NormalPredictionMode } from '../../config/CompressionShared'
 
 import type { PointAttribute } from '../../../attributes/PointAttribute'
@@ -18,7 +19,8 @@ function buildInt32PositionCache(
   numEntries: number,
   tempPos: number[],
 ): Int32Array {
-  const cache = new Int32Array(numEntries * 3)
+  // Decode-scoped scratch: consumed by this attribute's prediction pass.
+  const cache = scratchInt32(numEntries * 3)
   const bufData = att.buffer && att.buffer.data
 
   if (att.dataType === DataType.INT32 && att.numComponents === 3 && bufData) {
@@ -113,7 +115,7 @@ class MeshPredictionSchemeGeometricNormalPredictorArea {
     const cornerToVertex = this._cornerToVertex
     const vertexToDataMap = this._meshData.vertexToDataMap
     const nc = cornerToVertex.length
-    const c2o = new Int32Array(nc)
+    const c2o = scratchInt32(nc)
     for (let c = 0; c < nc; ++c) {
       const v = cornerToVertex[c]
       c2o[c] = v < 0 ? -1 : vertexToDataMap[v] * 3

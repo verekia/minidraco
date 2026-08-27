@@ -3,7 +3,7 @@
 import { bitstreamVersion } from './Macros'
 import { decodeVarint } from './VarintDecoding'
 
-class BitDecoder {
+export class BitDecoder {
   _bitBuffer: Uint8Array | null
   _bitOffset: number
   _byteLength: number

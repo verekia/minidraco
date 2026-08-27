@@ -1,5 +1,6 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerTraversalValenceDecoder.js (MIT)
 
+import { scratchInt32Filled, scratchUint32 } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { decodeSymbols } from '../entropy/SymbolDecoding'
 import {
@@ -29,7 +30,13 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
   _maxValence: number
   _vertexValences: Int32Array
   _contextSymbols: Uint32Array[]
-  _contextCounters: number[]
+  // Int32Array, not number[]: read and written once per decoded symbol.
+  _contextCounters: Int32Array
+  // corner -> vertex of _cornerTable, cached at init(); the array is created
+  // once by CornerTable.reset() before the traversal decoder is initialized and
+  // never replaced, so the per-symbol hot path can read it without two property
+  // loads.
+  _cornerToVertex: Int32Array
 
   constructor() {
     super()
@@ -41,12 +48,14 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     this._maxValence = 7
     this._vertexValences = new Int32Array(0)
     this._contextSymbols = []
-    this._contextCounters = []
+    this._contextCounters = new Int32Array(0)
+    this._cornerToVertex = new Int32Array(0)
   }
 
   override init(decoder: MeshEdgebreakerDecoderImpl): void {
     super.init(decoder)
     this._cornerTable = decoder.getCornerTable()
+    this._cornerToVertex = this._cornerTable!._cornerToVertex!
   }
 
   override setNumEncodedVertices(numVertices: number): void {
@@ -69,13 +78,14 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
       return false
     }
     // Int32Array: read/written for every decoded symbol; typed access keeps
-    // the newActiveCornerReached hot path monomorphic
-    this._vertexValences = new Int32Array(this._numVertices)
+    // the newActiveCornerReached hot path monomorphic. Decode-scoped scratch,
+    // zeroed because valences accumulate from 0.
+    this._vertexValences = scratchInt32Filled(this._numVertices, 0)
 
     const numUniqueValences = this._maxValence - this._minValence + 1
 
     this._contextSymbols = new Array<Uint32Array>(numUniqueValences)
-    this._contextCounters = new Array<number>(numUniqueValences)
+    this._contextCounters = new Int32Array(numUniqueValences)
 
     for (let i = 0; i < numUniqueValences; ++i) {
       const numSymbols = decodeVarint(outBuffer)
@@ -86,7 +96,8 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
         return false
       }
       if (numSymbols > 0) {
-        this._contextSymbols[i] = new Uint32Array(numSymbols)
+        // Decode-scoped scratch; decodeSymbols writes every entry.
+        this._contextSymbols[i] = scratchUint32(numSymbols)
         if (!decodeSymbols(numSymbols, 1, outBuffer, this._contextSymbols[i])) {
           return false
         }
@@ -122,7 +133,7 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     // Called once per decoded symbol from _decodeConnectivity's hot loop with
     // a fresh, valid corner, so inline next/previous/vertex as flat-array
     // reads instead of paying the corner-table method dispatch 6-8x per call.
-    const cornerToVertex = this._cornerTable!._cornerToVertex!
+    const cornerToVertex = this._cornerToVertex
     const valences = this._vertexValences
     const next = corner % 3 === 2 ? corner - 2 : corner + 1
     const prev = corner % 3 === 0 ? corner + 2 : corner - 1

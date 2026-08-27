@@ -1,5 +1,6 @@
 // Ported from draco.js src/compression/entropy/RAnsSymbolDecoder.js (MIT)
 
+import { scratchUint32Zeroed } from '../../core/ScratchArena'
 import { RAnsDecoder } from './ANSCoding'
 
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
@@ -46,7 +47,10 @@ export class RAnsSymbolDecoder {
     }
 
     const numSymbols = this.numSymbols_
-    const probabilityTable = new Uint32Array(numSymbols)
+    // Decode-scoped scratch: this table only feeds ransBuildLookUpTable below,
+    // and a primitive-heavy file builds thousands of symbol decoders. Zeroed
+    // because run-length tokens leave their entries untouched.
+    const probabilityTable = scratchUint32Zeroed(numSymbols)
     this.probabilityTable_ = probabilityTable
     if (numSymbols === 0) {
       return true
