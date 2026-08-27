@@ -15,8 +15,11 @@ import {
   TOPOLOGY_L,
   TOPOLOGY_R,
   TOPOLOGY_E,
+  TOPOLOGY_INVALID,
   RIGHT_FACE_EDGE,
+  edgeBreakerSymbolToTopologyId,
 } from './MeshEdgebreakerShared'
+import { MeshEdgebreakerTraversalValenceDecoder } from './MeshEdgebreakerTraversalValenceDecoder'
 import { DepthFirstTraverser } from './traverser/DepthFirstTraverser'
 import { MaxPredictionDegreeTraverser } from './traverser/MaxPredictionDegreeTraverser'
 import { MeshAttributeIndicesEncodingObserver } from './traverser/MeshAttributeIndicesEncodingObserver'
@@ -432,10 +435,42 @@ class MeshEdgebreakerDecoderImpl {
     let vertexCorners = vc._vertexCorners!
     const isVertHole = this._isVertHole
     const traversalDecoder = this._traversalDecoder
+    // Specialize the standard 2.2-bitstream case: the valence decoder's
+    // decodeSymbol() and newActiveCornerReached() run once per symbol, but
+    // _decodeConnectivity exceeds V8's inlining budget so both stay real
+    // polymorphic calls. Hoist the valence decoder's state into locals and
+    // inline the two of them (plus mergeVertices) below; the older traversal
+    // decoders keep the method calls. State touched by the inlined code
+    // (activeContext, lastSymbol) is written back after the loop.
+    const valenceDecoder = traversalDecoder instanceof MeshEdgebreakerTraversalValenceDecoder ? traversalDecoder : null
+    const valences = valenceDecoder !== null ? valenceDecoder._vertexValences : null
+    const contextSymbols = valenceDecoder !== null ? valenceDecoder._contextSymbols : null
+    const contextCounters = valenceDecoder !== null ? valenceDecoder._contextCounters : null
+    const minValence = valenceDecoder !== null ? valenceDecoder._minValence : 0
+    const maxValence = valenceDecoder !== null ? valenceDecoder._maxValence : 0
+    let activeContext = valenceDecoder !== null ? valenceDecoder._activeContext : -1
+    let lastSymbol = valenceDecoder !== null ? valenceDecoder._lastSymbol : -1
     for (let symbolId = 0; symbolId < numSymbols; ++symbolId) {
       const faceIndex = numFacesDecoded++
       let checkTopologySplit = false
-      const symbol = traversalDecoder.decodeSymbol()
+      let symbol: number
+      if (valenceDecoder !== null) {
+        // Inlined MeshEdgebreakerTraversalValenceDecoder.decodeSymbol().
+        if (activeContext !== -1) {
+          const contextCounter = --contextCounters![activeContext]
+          if (contextCounter < 0) {
+            symbol = TOPOLOGY_INVALID
+          } else {
+            const rawSymbolId = contextSymbols![activeContext][contextCounter]
+            symbol = rawSymbolId > 4 ? TOPOLOGY_INVALID : edgeBreakerSymbolToTopologyId[rawSymbolId]
+          }
+        } else {
+          symbol = TOPOLOGY_E // The first symbol is always E.
+        }
+        lastSymbol = symbol
+      } else {
+        symbol = traversalDecoder.decodeSymbol()
+      }
 
       if (symbol === TOPOLOGY_C) {
         // Create a new face between two edges on the open boundary.
@@ -556,7 +591,11 @@ class MeshEdgebreakerDecoderImpl {
 
         let cornerN = cornerB % 3 === 2 ? cornerB - 2 : cornerB + 1 // next(cornerB)
         const vertexN = cornerToVertex[cornerN]
-        traversalDecoder.mergeVertices(vertexP, vertexN)
+        if (valences !== null) {
+          valences[vertexP] += valences[vertexN] // inlined mergeVertices
+        } else {
+          traversalDecoder.mergeVertices(vertexP, vertexN)
+        }
         // Update the left-most corner on the newly merged vertex.
         vertexCorners[vertexP] = vertexCorners[vertexN] // leftMostCorner(vertexN)
 
@@ -608,7 +647,48 @@ class MeshEdgebreakerDecoderImpl {
         return -1 // unknown symbol
       }
 
-      traversalDecoder.newActiveCornerReached(activeCornerStack[activeCornerStackSize - 1])
+      if (valences !== null) {
+        // Inlined newActiveCornerReached(): bump the valences of the new
+        // face's vertices per symbol type, then pick the entropy context from
+        // the clamped valence of the next vertex.
+        const activeCorner = activeCornerStack[activeCornerStackSize - 1]
+        const nextC = activeCorner % 3 === 2 ? activeCorner - 2 : activeCorner + 1
+        const prevC = activeCorner % 3 === 0 ? activeCorner + 2 : activeCorner - 1
+        const vertNext = cornerToVertex[nextC]
+        const vertPrev = cornerToVertex[prevC]
+
+        switch (lastSymbol) {
+          case TOPOLOGY_C:
+          case TOPOLOGY_S:
+            valences[vertNext] += 1
+            valences[vertPrev] += 1
+            break
+          case TOPOLOGY_R:
+            valences[cornerToVertex[activeCorner]] += 1
+            valences[vertNext] += 1
+            valences[vertPrev] += 2
+            break
+          case TOPOLOGY_L:
+            valences[cornerToVertex[activeCorner]] += 1
+            valences[vertNext] += 2
+            valences[vertPrev] += 1
+            break
+          case TOPOLOGY_E:
+            valences[cornerToVertex[activeCorner]] += 2
+            valences[vertNext] += 2
+            valences[vertPrev] += 2
+            break
+          default:
+            break
+        }
+
+        const activeValence = valences[vertNext]
+        const clampedValence =
+          activeValence < minValence ? minValence : activeValence > maxValence ? maxValence : activeValence
+        activeContext = clampedValence - minValence
+      } else {
+        traversalDecoder.newActiveCornerReached(activeCornerStack[activeCornerStackSize - 1])
+      }
 
       if (checkTopologySplit) {
         const encoderSymbolId = numSymbols - symbolId - 1
@@ -630,6 +710,11 @@ class MeshEdgebreakerDecoderImpl {
           topologySplitActiveCorners.set(decoderSplitSymbolId, newActiveCorner)
         }
       }
+    }
+
+    if (valenceDecoder !== null) {
+      valenceDecoder._activeContext = activeContext
+      valenceDecoder._lastSymbol = lastSymbol
     }
 
     if (vc._numVertices > maxNumVertices) {
