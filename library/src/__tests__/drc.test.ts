@@ -92,17 +92,13 @@ describe('raw .drc fixtures', () => {
           const actual = attribute.extractTo(Ctor as never, expected.numPoints) as ArrayLike<number>
           expect(actual.length).toBe(expectedAttribute.data.length)
 
-          const isFloat = expectedAttribute.data instanceof Float32Array
           for (let i = 0; i < actual.length; i++) {
             const a = actual[i]
             const e = expectedAttribute.data[i]
+            // Bit-exact, floats included: every float path mirrors the wasm
+            // decoder's float32 arithmetic via Math.fround (=== also treats
+            // +0/-0 as equal, matching the fidelity suite's ulp convention).
             if (a === e) continue
-            if (isFloat) {
-              // Allow 1 ulp: wasm dequantizes in float32, JS in float64-then-round
-              const ulpA = new Int32Array(new Float32Array([a]).buffer)[0]
-              const ulpE = new Int32Array(new Float32Array([e]).buffer)[0]
-              if (Math.abs(ulpA - ulpE) <= 1) continue
-            }
             throw new Error(`${fixture}: attribute ${expectedAttribute.uniqueId} differs at ${i}: ${a} !== ${e}`)
           }
         }

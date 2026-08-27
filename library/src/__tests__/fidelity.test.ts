@@ -1,8 +1,10 @@
 // Fidelity suite: minidraco must reproduce the official draco3d wasm decoder's
 // output on the production bundle GLBs and the draco.js sample models —
-// identical connectivity, identical integer attributes, and float attributes
-// within 1 ulp (the wasm decoder dequantizes in 32-bit floats; JS computes in
-// doubles before rounding to float32, which can differ in the last bit).
+// identical connectivity, identical integer attributes, and bit-exact float
+// attributes. Exactness is achievable because every float path mirrors the
+// C++ float32 operation order via Math.fround (a full-corpus census measured
+// 0 ulp across ~15M values); the tolerance constant stays as the single knob
+// to loosen if a future bitstream ever exercises an unmirrored path.
 import { describe, expect, test } from 'bun:test'
 
 import {
@@ -15,7 +17,7 @@ import {
 
 import type { DecodedPrimitive } from '../../scripts/harness'
 
-const FLOAT_ULP_TOLERANCE = 1
+const FLOAT_ULP_TOLERANCE = 0
 
 const ulpDiff = (a: number, b: number): number => {
   if (a === b) return 0
