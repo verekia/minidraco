@@ -1124,9 +1124,11 @@ class MeshAttributeIndicesEncodingData {
     // Int32Array (non-negative data indices) keeps the hot prediction-lookup
     // reads monomorphic. Decode-scoped scratch: both maps are consumed by the
     // attribute decoders of this primitive and never escape into the result.
-    // The vertex map is zero-filled because vertices that no face reaches are
-    // never written by the traversal but can still be read back.
-    this._vertexToEncodedAttributeValueIndexMap = scratchInt32Filled(numVertices, 0)
+    // The vertex map is filled with -1 so the depth-first traverser can use
+    // the sign as its vertex-visited flag (assigned entries are always >= 0);
+    // vertices no face reaches keep -1, and are never read back on well-formed
+    // input (the traversal covers every face corner's vertex).
+    this._vertexToEncodedAttributeValueIndexMap = scratchInt32Filled(numVertices, -1)
     this._encodedAttributeValueIndexToCornerMap = scratchInt32(numVertices)
     this._numValues = 0
   }
