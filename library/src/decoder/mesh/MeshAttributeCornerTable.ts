@@ -22,7 +22,11 @@ class MeshAttributeCornerTable {
   _effectiveOpposite: Int32Array | null
   // Every corner passed to addSeamEdge (may contain duplicates); lets
   // oppositeCornerArray patch seams without scanning every corner's flag.
-  _seamCorners: number[]
+  // Preallocated to its exact upper bound (2 per seam edge) by the caller via
+  // reserveSeamEdges -- a plain array grown by push() was measurable on
+  // seam-heavy files.
+  _seamCorners: Int32Array | number[]
+  _numSeamCorners: number
 
   constructor() {
     this.is_edge_on_seam_ = []
@@ -34,6 +38,7 @@ class MeshAttributeCornerTable {
     this.corner_table_ = null
     this._effectiveOpposite = null
     this._seamCorners = []
+    this._numSeamCorners = 0
   }
 
   initEmpty(table: CornerTable | null): boolean {
@@ -53,9 +58,17 @@ class MeshAttributeCornerTable {
     // Lazily built; see oppositeCornerArray.
     this._effectiveOpposite = null
     this._seamCorners = []
+    this._numSeamCorners = 0
     this.corner_table_ = table
     this.no_interior_seams_ = true
     return true
+  }
+
+  // Sizes the seam-corner list for numSeamEdges upcoming addSeamEdge calls
+  // (each adds at most two corners). Decode-scoped scratch.
+  reserveSeamEdges(numSeamEdges: number): void {
+    this._seamCorners = scratchInt32(numSeamEdges * 2)
+    this._numSeamCorners = 0
   }
 
   addSeamEdge(c: number): void {
@@ -63,9 +76,10 @@ class MeshAttributeCornerTable {
     const oppositeCorners = this.corner_table_!.oppositeCornerArray()
     const isEdge = this.is_edge_on_seam_
     const isVert = this.is_vertex_on_seam_
+    const seamCorners = this._seamCorners
 
     isEdge[c] = 1
-    this._seamCorners.push(c)
+    seamCorners[this._numSeamCorners++] = c
     // Inlined next(c)/previous(c).
     let rem = c - ((c / 3) | 0) * 3
     isVert[cornerToVertex[rem === 2 ? c - 2 : c + 1]] = 1
@@ -75,7 +89,7 @@ class MeshAttributeCornerTable {
     if (oppCorner !== kInvalidCornerIndex) {
       this.no_interior_seams_ = false
       isEdge[oppCorner] = 1
-      this._seamCorners.push(oppCorner)
+      seamCorners[this._numSeamCorners++] = oppCorner
       rem = oppCorner - ((oppCorner / 3) | 0) * 3
       isVert[cornerToVertex[rem === 2 ? oppCorner - 2 : oppCorner + 1]] = 1
       isVert[cornerToVertex[rem === 0 ? oppCorner + 2 : oppCorner - 1]] = 1
@@ -226,7 +240,8 @@ class MeshAttributeCornerTable {
       const nc = this.corner_table_!.numCorners()
       const base = this.corner_table_!.oppositeCornerArray()
       const seamCorners = this._seamCorners
-      if (seamCorners.length === 0) {
+      const numSeamCorners = this._numSeamCorners
+      if (numSeamCorners === 0) {
         // No seams: the base connectivity is already correct, share it.
         // (It is read-only after connectivity decoding.)
         this._effectiveOpposite = base
@@ -238,7 +253,7 @@ class MeshAttributeCornerTable {
         // cache entries that may share it) never outlives the decode.
         const eff = scratchInt32(nc)
         eff.set(base.length === nc ? base : base.subarray(0, nc))
-        for (let i = 0, l = seamCorners.length; i < l; ++i) {
+        for (let i = 0; i < numSeamCorners; ++i) {
           eff[seamCorners[i]] = kInvalidCornerIndex
         }
         this._effectiveOpposite = eff
@@ -269,6 +284,7 @@ class MeshAttributeCornerTable {
     this.no_interior_seams_ = other.no_interior_seams_
     this._effectiveOpposite = other._effectiveOpposite
     this._seamCorners = other._seamCorners
+    this._numSeamCorners = other._numSeamCorners
   }
 }
 

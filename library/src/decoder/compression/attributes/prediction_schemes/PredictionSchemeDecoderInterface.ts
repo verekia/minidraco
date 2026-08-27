@@ -32,6 +32,23 @@ class PredictionSchemeDecoderInterface {
     return true
   }
 
+  /**
+   * Like computeOriginalValues, but inCorr still holds unsigned zigzag-coded
+   * corrections; the implementation unpacks each one inline, replacing the
+   * standalone convertSymbolsToSignedInts pass. Returns undefined when the
+   * scheme/transform combination cannot fuse (the caller then falls back to
+   * the two-pass path). Base implementation: never fusable.
+   */
+  computeOriginalValuesZigzag(
+    _inCorr: Int32Array,
+    _outData: Int32Array,
+    _size: number,
+    _numComponents: number,
+    _entryToPointIdMap: Int32Array,
+  ): boolean | undefined {
+    return undefined
+  }
+
   /** Reverts the prediction applied during encoding, writing original values to outData. */
   computeOriginalValues(
     _inCorr: Int32Array,

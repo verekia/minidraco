@@ -25,6 +25,27 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     return this._meshData.isInitialized()
   }
 
+  // Zigzag-fused variant: decodes corrections that are still in their unsigned
+  // zigzag form, unpacking each one inline. Only offered for the wrap
+  // transform (whose corrections are the only zigzag-coded ones this scheme
+  // sees); callers fall back to the standalone conversion pass otherwise.
+  override computeOriginalValuesZigzag(
+    inCorr: Int32Array,
+    outData: Int32Array,
+    _size: number,
+    numComponents: number,
+    _entryToPointIdMap: Int32Array,
+  ): boolean | undefined {
+    this._transform.init(numComponents)
+    if (
+      !this._transform.getType ||
+      this._transform.getType() !== PredictionSchemeTransformType.PREDICTION_TRANSFORM_WRAP
+    ) {
+      return undefined // Not fusable; caller uses the two-pass path.
+    }
+    return this._computeOriginalValuesWrap(inCorr, outData, numComponents, true)
+  }
+
   override computeOriginalValues(
     inCorr: Int32Array,
     outData: Int32Array,
@@ -38,7 +59,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       this._transform.getType &&
       this._transform.getType() === PredictionSchemeTransformType.PREDICTION_TRANSFORM_WRAP
     ) {
-      return this._computeOriginalValuesWrap(inCorr, outData, numComponents)
+      return this._computeOriginalValuesWrap(inCorr, outData, numComponents, false)
     }
 
     const table = this._meshData.cornerTable
@@ -90,12 +111,18 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     return true
   }
 
-  _computeOriginalValuesWrap(inCorr: Int32Array, outData: Int32Array, numComponents: number): boolean {
+  // The wrap transform's corrections are zigzag-coded; with `zigzag` set the
+  // decode folds the (val >>> 1) ^ -(val & 1) unpacking into each correction
+  // read, replacing the standalone convertSymbolsToSignedInts pass over the
+  // whole array (see computeOriginalValuesZigzag). Every correction is read
+  // exactly once before its slot is overwritten, so the in-place aliasing of
+  // inCorr and outData is preserved.
+  _computeOriginalValuesWrap(inCorr: Int32Array, outData: Int32Array, numComponents: number, zigzag: boolean): boolean {
     if (numComponents === 2) {
-      return this._computeOriginalValuesWrap2(inCorr, outData)
+      return this._computeOriginalValuesWrap2(inCorr, outData, zigzag)
     }
     if (numComponents === 3) {
-      return this._computeOriginalValuesWrap3(inCorr, outData)
+      return this._computeOriginalValuesWrap3(inCorr, outData, zigzag)
     }
 
     const table = this._meshData.cornerTable
@@ -115,7 +142,8 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       } else if (pred < minValue) {
         pred = minValue
       }
-      let orig = (pred + inCorr[c]) | 0
+      const raw = inCorr[c]
+      let orig = (pred + (zigzag ? (raw >>> 1) ^ -(raw & 1) : raw)) | 0
       if (orig > maxValue) {
         orig -= maxDif
       } else if (orig < minValue) {
@@ -159,7 +187,8 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
           } else if (pred < minValue) {
             pred = minValue
           }
-          let orig = (pred + inCorr[dstOffset + c]) | 0
+          const raw = inCorr[dstOffset + c]
+          let orig = (pred + (zigzag ? (raw >>> 1) ^ -(raw & 1) : raw)) | 0
           if (orig > maxValue) {
             orig -= maxDif
           } else if (orig < minValue) {
@@ -176,7 +205,8 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
           } else if (pred < minValue) {
             pred = minValue
           }
-          let orig = (pred + inCorr[dstOffset + c]) | 0
+          const raw = inCorr[dstOffset + c]
+          let orig = (pred + (zigzag ? (raw >>> 1) ^ -(raw & 1) : raw)) | 0
           if (orig > maxValue) {
             orig -= maxDif
           } else if (orig < minValue) {
@@ -190,7 +220,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     return true
   }
 
-  _computeOriginalValuesWrap2(inCorr: Int32Array, outData: Int32Array): boolean {
+  _computeOriginalValuesWrap2(inCorr: Int32Array, outData: Int32Array, zigzag: boolean): boolean {
     const table = this._meshData.cornerTable
     const vertexToDataMap = this._meshData.vertexToDataMap
     const oppositeCorners = table.oppositeCornerArray() as Int32Array
@@ -212,8 +242,10 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     } else if (pred1 < minValue) {
       pred1 = minValue
     }
-    let orig0 = (pred0 + inCorr[0]) | 0
-    let orig1 = (pred1 + inCorr[1]) | 0
+    const raw0 = inCorr[0]
+    const raw1 = inCorr[1]
+    let orig0 = (pred0 + (zigzag ? (raw0 >>> 1) ^ -(raw0 & 1) : raw0)) | 0
+    let orig1 = (pred1 + (zigzag ? (raw1 >>> 1) ^ -(raw1 & 1) : raw1)) | 0
     if (orig0 > maxValue) {
       orig0 -= maxDif
     } else if (orig0 < minValue) {
@@ -269,8 +301,10 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       } else if (pred1 < minValue) {
         pred1 = minValue
       }
-      orig0 = (pred0 + inCorr[dstOffset]) | 0
-      orig1 = (pred1 + inCorr[dstOffset + 1]) | 0
+      const rawA = inCorr[dstOffset]
+      const rawB = inCorr[dstOffset + 1]
+      orig0 = (pred0 + (zigzag ? (rawA >>> 1) ^ -(rawA & 1) : rawA)) | 0
+      orig1 = (pred1 + (zigzag ? (rawB >>> 1) ^ -(rawB & 1) : rawB)) | 0
       if (orig0 > maxValue) {
         orig0 -= maxDif
       } else if (orig0 < minValue) {
@@ -288,7 +322,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     return true
   }
 
-  _computeOriginalValuesWrap3(inCorr: Int32Array, outData: Int32Array): boolean {
+  _computeOriginalValuesWrap3(inCorr: Int32Array, outData: Int32Array, zigzag: boolean): boolean {
     const table = this._meshData.cornerTable
     const vertexToDataMap = this._meshData.vertexToDataMap
     const oppositeCorners = table.oppositeCornerArray() as Int32Array
@@ -316,9 +350,12 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     } else if (pred2 < minValue) {
       pred2 = minValue
     }
-    let orig0 = (pred0 + inCorr[0]) | 0
-    let orig1 = (pred1 + inCorr[1]) | 0
-    let orig2 = (pred2 + inCorr[2]) | 0
+    const raw0 = inCorr[0]
+    const raw1 = inCorr[1]
+    const raw2 = inCorr[2]
+    let orig0 = (pred0 + (zigzag ? (raw0 >>> 1) ^ -(raw0 & 1) : raw0)) | 0
+    let orig1 = (pred1 + (zigzag ? (raw1 >>> 1) ^ -(raw1 & 1) : raw1)) | 0
+    let orig2 = (pred2 + (zigzag ? (raw2 >>> 1) ^ -(raw2 & 1) : raw2)) | 0
     if (orig0 > maxValue) {
       orig0 -= maxDif
     } else if (orig0 < minValue) {
@@ -387,9 +424,12 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       } else if (pred2 < minValue) {
         pred2 = minValue
       }
-      orig0 = (pred0 + inCorr[dstOffset]) | 0
-      orig1 = (pred1 + inCorr[dstOffset + 1]) | 0
-      orig2 = (pred2 + inCorr[dstOffset + 2]) | 0
+      const rawA = inCorr[dstOffset]
+      const rawB = inCorr[dstOffset + 1]
+      const rawC = inCorr[dstOffset + 2]
+      orig0 = (pred0 + (zigzag ? (rawA >>> 1) ^ -(rawA & 1) : rawA)) | 0
+      orig1 = (pred1 + (zigzag ? (rawB >>> 1) ^ -(rawB & 1) : rawB)) | 0
+      orig2 = (pred2 + (zigzag ? (rawC >>> 1) ^ -(rawC & 1) : rawC)) | 0
       if (orig0 > maxValue) {
         orig0 -= maxDif
       } else if (orig0 < minValue) {

@@ -332,6 +332,7 @@ class MeshEdgebreakerDecoderImpl {
         connectivityData.adoptFrom(previousConnectivityData!)
       } else {
         connectivityData.initEmpty(this._cornerTable)
+        connectivityData.reserveSeamEdges(seamCount)
         for (let s = 0; s < seamCount; ++s) {
           connectivityData.addSeamEdge(seamCorners[s])
         }
