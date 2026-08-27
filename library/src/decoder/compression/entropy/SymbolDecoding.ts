@@ -28,7 +28,7 @@ export function decodeSymbols(
   return false
 }
 
-function decodeTaggedSymbols(
+export function decodeTaggedSymbols(
   numValues: number,
   numComponents: number,
   srcBuffer: DecoderBuffer,
