@@ -1,5 +1,5 @@
 {
-  "date": "2026-07-05",
+  "date": "2026-08-27",
   "runtime": "bun 1.3.14",
   "engine": "JavaScriptCore",
   "cpu": "Apple M3",
@@ -12,9 +12,9 @@
       "points": 5050,
       "faces": 2544,
       "medianMs": {
-        "minidraco": 1.892,
-        "draco.js": 2.308,
-        "draco3d (wasm)": 3.08
+        "minidraco": 3.525,
+        "draco.js": 3.983,
+        "draco3d (wasm)": 2.878
       }
     },
     {
@@ -23,9 +23,9 @@
       "points": 291342,
       "faces": 220879,
       "medianMs": {
-        "minidraco": 47.893,
-        "draco.js": 51.033,
-        "draco3d (wasm)": 50.213
+        "minidraco": 65.111,
+        "draco.js": 74.51,
+        "draco3d (wasm)": 66.351
       }
     },
     {
@@ -34,9 +34,9 @@
       "points": 14864,
       "faces": 24448,
       "medianMs": {
-        "minidraco": 3.742,
-        "draco.js": 3.664,
-        "draco3d (wasm)": 4.528
+        "minidraco": 4.387,
+        "draco.js": 5.699,
+        "draco3d (wasm)": 6.609
       }
     },
     {
@@ -45,9 +45,9 @@
       "points": 193125,
       "faces": 141802,
       "medianMs": {
-        "minidraco": 69.907,
-        "draco.js": 74.465,
-        "draco3d (wasm)": 76.189
+        "minidraco": 90.243,
+        "draco.js": 100.754,
+        "draco3d (wasm)": 101.65
       }
     },
     {
@@ -56,9 +56,9 @@
       "points": 8377,
       "faces": 13388,
       "medianMs": {
-        "minidraco": 4.166,
-        "draco.js": 4.451,
-        "draco3d (wasm)": 5.098
+        "minidraco": 4.846,
+        "draco.js": 5.647,
+        "draco3d (wasm)": 6.661
       }
     },
     {
@@ -67,9 +67,9 @@
       "points": 21759,
       "faces": 32158,
       "medianMs": {
-        "minidraco": 5.994,
-        "draco.js": 5.986,
-        "draco3d (wasm)": 5.813
+        "minidraco": 6.414,
+        "draco.js": 7.635,
+        "draco3d (wasm)": 7.79
       }
     },
     {
@@ -78,9 +78,9 @@
       "points": 2277,
       "faces": 4212,
       "medianMs": {
-        "minidraco": 0.801,
-        "draco.js": 0.9,
-        "draco3d (wasm)": 1.08
+        "minidraco": 1.028,
+        "draco.js": 1.223,
+        "draco3d (wasm)": 1.52
       }
     },
     {
@@ -89,9 +89,9 @@
       "points": 337834,
       "faces": 358788,
       "medianMs": {
-        "minidraco": 61.336,
-        "draco.js": 62.043,
-        "draco3d (wasm)": 76.996
+        "minidraco": 71.946,
+        "draco.js": 83.677,
+        "draco3d (wasm)": 99.952
       }
     },
     {
@@ -100,9 +100,9 @@
       "points": 11924,
       "faces": 10956,
       "medianMs": {
-        "minidraco": 2.481,
-        "draco.js": 2.596,
-        "draco3d (wasm)": 2.767
+        "minidraco": 2.658,
+        "draco.js": 3.513,
+        "draco3d (wasm)": 3.473
       }
     },
     {
@@ -111,9 +111,9 @@
       "points": 23426,
       "faces": 21696,
       "medianMs": {
-        "minidraco": 2.954,
-        "draco.js": 2.978,
-        "draco3d (wasm)": 3.348
+        "minidraco": 3.378,
+        "draco.js": 4.04,
+        "draco3d (wasm)": 4.407
       }
     },
     {
@@ -122,9 +122,9 @@
       "points": 55486,
       "faces": 51601,
       "medianMs": {
-        "minidraco": 9.512,
-        "draco.js": 9.393,
-        "draco3d (wasm)": 11.257
+        "minidraco": 10.365,
+        "draco.js": 12.611,
+        "draco3d (wasm)": 15.129
       }
     },
     {
@@ -133,9 +133,9 @@
       "points": 13884,
       "faces": 10457,
       "medianMs": {
-        "minidraco": 2.571,
-        "draco.js": 2.606,
-        "draco3d (wasm)": 3.203
+        "minidraco": 3.25,
+        "draco.js": 3.438,
+        "draco3d (wasm)": 3.898
       }
     },
     {
@@ -144,9 +144,9 @@
       "points": 349197,
       "faces": 320352,
       "medianMs": {
-        "minidraco": 128.985,
-        "draco.js": 133.696,
-        "draco3d (wasm)": 139.533
+        "minidraco": 150.793,
+        "draco.js": 170.165,
+        "draco3d (wasm)": 179.066
       }
     },
     {
@@ -155,9 +155,9 @@
       "points": 13501,
       "faces": 22280,
       "medianMs": {
-        "minidraco": 5.001,
-        "draco.js": 5.023,
-        "draco3d (wasm)": 4.018
+        "minidraco": 6.161,
+        "draco.js": 7.781,
+        "draco3d (wasm)": 5.036
       }
     },
     {
@@ -166,9 +166,9 @@
       "points": 101560,
       "faces": 120336,
       "medianMs": {
-        "minidraco": 35.7,
-        "draco.js": 37.612,
-        "draco3d (wasm)": 40.78
+        "minidraco": 44.882,
+        "draco.js": 50.592,
+        "draco3d (wasm)": 51.589
       }
     },
     {
@@ -177,9 +177,9 @@
       "points": 173876,
       "faces": 295600,
       "medianMs": {
-        "minidraco": 75.986,
-        "draco.js": 77.393,
-        "draco3d (wasm)": 80.403
+        "minidraco": 84.051,
+        "draco.js": 99.63,
+        "draco3d (wasm)": 100.607
       }
     },
     {
@@ -188,9 +188,9 @@
       "points": 34834,
       "faces": 69451,
       "medianMs": {
-        "minidraco": 7.939,
-        "draco.js": 8.684,
-        "draco3d (wasm)": 4.238
+        "minidraco": 9.446,
+        "draco.js": 10.784,
+        "draco3d (wasm)": 5.49
       }
     },
     {
@@ -199,9 +199,9 @@
       "points": 1856,
       "faces": 1744,
       "medianMs": {
-        "minidraco": 0.064,
-        "draco.js": 2.985,
-        "draco3d (wasm)": 0.132
+        "minidraco": 0.086,
+        "draco.js": 4.184,
+        "draco3d (wasm)": 0.222
       }
     },
     {
@@ -210,9 +210,9 @@
       "points": 2277,
       "faces": 4212,
       "medianMs": {
-        "minidraco": 1.144,
-        "draco.js": 1.137,
-        "draco3d (wasm)": 1.158
+        "minidraco": 0.996,
+        "draco.js": 1.258,
+        "draco3d (wasm)": 1.355
       }
     }
   ]
