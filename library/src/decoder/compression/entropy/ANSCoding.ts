@@ -330,3 +330,308 @@ export class RAnsDecoder {
     return true
   }
 }
+
+// Decodes two independent rANS streams in lockstep, countA symbols into outA
+// and countB into outB. The two dependency chains overlap in the CPU pipeline,
+// hiding most of the per-symbol load-multiply latency that serializes a single
+// stream (measured 1.2x on V8 and 1.4x+ on JSC for the same total symbols).
+// Both decoders must have Uint8Array luts (callers pair small-alphabet streams;
+// the valence contexts always are). Outputs are identical to decoding each
+// stream alone. Uneven tails finish through the single-stream path.
+export function ransDecodeSymbolsPairU8(
+  a: RAnsDecoder,
+  outA: Uint32Array,
+  countA: number,
+  b: RAnsDecoder,
+  outB: Uint32Array,
+  countB: number,
+): void {
+  const lutA = a.lutTable as Uint8Array
+  const lutB = b.lutTable as Uint8Array
+  const bufA = a.buf!
+  const bufB = b.buf!
+  const probA = a.probTable!
+  const probB = b.probTable!
+  const cumA = a.cumProbTable!
+  const cumB = b.cumProbTable!
+  const lBaseA = a.lRansBase
+  const lBaseB = b.lRansBase
+  const bitsA = a.ransPrecisionBits
+  const bitsB = b.ransPrecisionBits
+  const maskA = a.ransPrecisionMask
+  const maskB = b.ransPrecisionMask
+  const startA = a.bufStart
+  const startB = b.bufStart
+  let stateA = a.state
+  let stateB = b.state
+  let offA = a.bufOffset
+  let offB = b.bufOffset
+
+  const shared = countA < countB ? countA : countB
+  for (let i = 0; i < shared; ++i) {
+    while (stateA < lBaseA && offA > startA) {
+      stateA = (stateA << 8) | bufA[--offA]
+    }
+    while (stateB < lBaseB && offB > startB) {
+      stateB = (stateB << 8) | bufB[--offB]
+    }
+    const remA = stateA & maskA
+    const remB = stateB & maskB
+    const symA = lutA[remA]
+    const symB = lutB[remB]
+    outA[i] = symA
+    outB[i] = symB
+    stateA = (stateA >>> bitsA) * probA[symA] + remA - cumA[symA]
+    stateB = (stateB >>> bitsB) * probB[symB] + remB - cumB[symB]
+  }
+
+  a.state = stateA
+  a.bufOffset = offA
+  b.state = stateB
+  b.bufOffset = offB
+  if (shared < countA) {
+    a.decodeSymbols(outA.subarray(shared), countA - shared)
+  }
+  if (shared < countB) {
+    b.decodeSymbols(outB.subarray(shared), countB - shared)
+  }
+}
+
+// Generic pairing entry: picks a lut-specialized lockstep loop (keeping each
+// hot lut access site monomorphic), or falls back to sequential decodes for
+// the rare huge-alphabet Uint32 lut.
+export function ransDecodeSymbolsPair(
+  a: RAnsDecoder,
+  outA: Uint32Array,
+  countA: number,
+  b: RAnsDecoder,
+  outB: Uint32Array,
+  countB: number,
+): void {
+  const lutA = a.lutTable!
+  const lutB = b.lutTable!
+  if (lutA instanceof Uint8Array && lutB instanceof Uint8Array) {
+    ransDecodeSymbolsPairU8(a, outA, countA, b, outB, countB)
+  } else if (lutA instanceof Uint16Array && lutB instanceof Uint16Array) {
+    ransDecodeSymbolsPairU16(a, outA, countA, b, outB, countB)
+  } else if (lutA instanceof Uint8Array && lutB instanceof Uint16Array) {
+    ransDecodeSymbolsPairU8U16(a, outA, countA, b, outB, countB)
+  } else if (lutA instanceof Uint16Array && lutB instanceof Uint8Array) {
+    ransDecodeSymbolsPairU8U16(b, outB, countB, a, outA, countA)
+  } else {
+    a.decodeSymbols(outA, countA)
+    b.decodeSymbols(outB, countB)
+  }
+}
+
+export function ransDecodeSymbolsPairU16(
+  a: RAnsDecoder,
+  outA: Uint32Array,
+  countA: number,
+  b: RAnsDecoder,
+  outB: Uint32Array,
+  countB: number,
+): void {
+  const lutA = a.lutTable as Uint16Array
+  const lutB = b.lutTable as Uint16Array
+  const bufA = a.buf!
+  const bufB = b.buf!
+  const probA = a.probTable!
+  const probB = b.probTable!
+  const cumA = a.cumProbTable!
+  const cumB = b.cumProbTable!
+  const lBaseA = a.lRansBase
+  const lBaseB = b.lRansBase
+  const bitsA = a.ransPrecisionBits
+  const bitsB = b.ransPrecisionBits
+  const maskA = a.ransPrecisionMask
+  const maskB = b.ransPrecisionMask
+  const startA = a.bufStart
+  const startB = b.bufStart
+  let stateA = a.state
+  let stateB = b.state
+  let offA = a.bufOffset
+  let offB = b.bufOffset
+
+  const shared = countA < countB ? countA : countB
+  for (let i = 0; i < shared; ++i) {
+    while (stateA < lBaseA && offA > startA) {
+      stateA = (stateA << 8) | bufA[--offA]
+    }
+    while (stateB < lBaseB && offB > startB) {
+      stateB = (stateB << 8) | bufB[--offB]
+    }
+    const remA = stateA & maskA
+    const remB = stateB & maskB
+    const symA = lutA[remA]
+    const symB = lutB[remB]
+    outA[i] = symA
+    outB[i] = symB
+    stateA = (stateA >>> bitsA) * probA[symA] + remA - cumA[symA]
+    stateB = (stateB >>> bitsB) * probB[symB] + remB - cumB[symB]
+  }
+
+  a.state = stateA
+  a.bufOffset = offA
+  b.state = stateB
+  b.bufOffset = offB
+  if (shared < countA) {
+    a.decodeSymbols(outA.subarray(shared), countA - shared)
+  }
+  if (shared < countB) {
+    b.decodeSymbols(outB.subarray(shared), countB - shared)
+  }
+}
+
+export function ransDecodeSymbolsPairU8U16(
+  a: RAnsDecoder,
+  outA: Uint32Array,
+  countA: number,
+  b: RAnsDecoder,
+  outB: Uint32Array,
+  countB: number,
+): void {
+  const lutA = a.lutTable as Uint8Array
+  const lutB = b.lutTable as Uint16Array
+  const bufA = a.buf!
+  const bufB = b.buf!
+  const probA = a.probTable!
+  const probB = b.probTable!
+  const cumA = a.cumProbTable!
+  const cumB = b.cumProbTable!
+  const lBaseA = a.lRansBase
+  const lBaseB = b.lRansBase
+  const bitsA = a.ransPrecisionBits
+  const bitsB = b.ransPrecisionBits
+  const maskA = a.ransPrecisionMask
+  const maskB = b.ransPrecisionMask
+  const startA = a.bufStart
+  const startB = b.bufStart
+  let stateA = a.state
+  let stateB = b.state
+  let offA = a.bufOffset
+  let offB = b.bufOffset
+
+  const shared = countA < countB ? countA : countB
+  for (let i = 0; i < shared; ++i) {
+    while (stateA < lBaseA && offA > startA) {
+      stateA = (stateA << 8) | bufA[--offA]
+    }
+    while (stateB < lBaseB && offB > startB) {
+      stateB = (stateB << 8) | bufB[--offB]
+    }
+    const remA = stateA & maskA
+    const remB = stateB & maskB
+    const symA = lutA[remA]
+    const symB = lutB[remB]
+    outA[i] = symA
+    outB[i] = symB
+    stateA = (stateA >>> bitsA) * probA[symA] + remA - cumA[symA]
+    stateB = (stateB >>> bitsB) * probB[symB] + remB - cumB[symB]
+  }
+
+  a.state = stateA
+  a.bufOffset = offA
+  b.state = stateB
+  b.bufOffset = offB
+  if (shared < countA) {
+    a.decodeSymbols(outA.subarray(shared), countA - shared)
+  }
+  if (shared < countB) {
+    b.decodeSymbols(outB.subarray(shared), countB - shared)
+  }
+}
+
+// Three-stream lockstep variant (Uint8 luts only -- the valence context
+// streams' alphabets never exceed five symbols). A third independent chain
+// extracts another ~15% per symbol over the pair loop on wide cores.
+export function ransDecodeSymbolsTrioU8(
+  a: RAnsDecoder,
+  outA: Uint32Array,
+  countA: number,
+  b: RAnsDecoder,
+  outB: Uint32Array,
+  countB: number,
+  c: RAnsDecoder,
+  outC: Uint32Array,
+  countC: number,
+): void {
+  const lutA = a.lutTable as Uint8Array
+  const lutB = b.lutTable as Uint8Array
+  const lutC = c.lutTable as Uint8Array
+  const bufA = a.buf!
+  const bufB = b.buf!
+  const bufC = c.buf!
+  const probA = a.probTable!
+  const probB = b.probTable!
+  const probC = c.probTable!
+  const cumA = a.cumProbTable!
+  const cumB = b.cumProbTable!
+  const cumC = c.cumProbTable!
+  const lBaseA = a.lRansBase
+  const lBaseB = b.lRansBase
+  const lBaseC = c.lRansBase
+  const bitsA = a.ransPrecisionBits
+  const bitsB = b.ransPrecisionBits
+  const bitsC = c.ransPrecisionBits
+  const maskA = a.ransPrecisionMask
+  const maskB = b.ransPrecisionMask
+  const maskC = c.ransPrecisionMask
+  const startA = a.bufStart
+  const startB = b.bufStart
+  const startC = c.bufStart
+  let stateA = a.state
+  let stateB = b.state
+  let stateC = c.state
+  let offA = a.bufOffset
+  let offB = b.bufOffset
+  let offC = c.bufOffset
+
+  let shared = countA < countB ? countA : countB
+  if (countC < shared) shared = countC
+  for (let i = 0; i < shared; ++i) {
+    while (stateA < lBaseA && offA > startA) {
+      stateA = (stateA << 8) | bufA[--offA]
+    }
+    while (stateB < lBaseB && offB > startB) {
+      stateB = (stateB << 8) | bufB[--offB]
+    }
+    while (stateC < lBaseC && offC > startC) {
+      stateC = (stateC << 8) | bufC[--offC]
+    }
+    const remA = stateA & maskA
+    const remB = stateB & maskB
+    const remC = stateC & maskC
+    const symA = lutA[remA]
+    const symB = lutB[remB]
+    const symC = lutC[remC]
+    outA[i] = symA
+    outB[i] = symB
+    outC[i] = symC
+    stateA = (stateA >>> bitsA) * probA[symA] + remA - cumA[symA]
+    stateB = (stateB >>> bitsB) * probB[symB] + remB - cumB[symB]
+    stateC = (stateC >>> bitsC) * probC[symC] + remC - cumC[symC]
+  }
+
+  a.state = stateA
+  a.bufOffset = offA
+  b.state = stateB
+  b.bufOffset = offB
+  c.state = stateC
+  c.bufOffset = offC
+  // Uneven tails: finish the two longer streams as a pair, or singly.
+  const restA = countA - shared
+  const restB = countB - shared
+  const restC = countC - shared
+  const tails: [RAnsDecoder, Uint32Array, number][] = []
+  if (restA > 0) tails.push([a, outA.subarray(shared), restA])
+  if (restB > 0) tails.push([b, outB.subarray(shared), restB])
+  if (restC > 0) tails.push([c, outC.subarray(shared), restC])
+  if (tails.length === 2) {
+    ransDecodeSymbolsPairU8(tails[0][0], tails[0][1], tails[0][2], tails[1][0], tails[1][1], tails[1][2])
+  } else {
+    for (const [decoder, out, count] of tails) {
+      decoder.decodeSymbols(out, count)
+    }
+  }
+}

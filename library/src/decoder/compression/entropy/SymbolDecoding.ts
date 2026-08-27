@@ -28,7 +28,7 @@ export function decodeSymbols(
   return false
 }
 
-function decodeTaggedSymbols(
+export function decodeTaggedSymbols(
   numValues: number,
   numComponents: number,
   srcBuffer: DecoderBuffer,
@@ -105,6 +105,30 @@ function decodeTaggedSymbols(
   tagDecoder.endDecoding()
   srcBuffer.endBitDecoding()
   return true
+}
+
+// Parses a RAW symbol stream's headers (max bit length, probability tables,
+// encoded-byte range) and returns the primed decoder WITHOUT decoding the
+// symbols; the cursor still advances past the whole stream (all movement is
+// size-driven), so parsing can run ahead while several streams' decodes are
+// batched and paired. Returns null on malformed input. The caller must run
+// the decode and then endDecoding().
+export function parseRawSymbolStream(numValues: number, srcBuffer: DecoderBuffer): RAnsSymbolDecoder | null {
+  const maxBitLength = srcBuffer.decodeUint8()
+  if (maxBitLength === undefined || maxBitLength < 1 || maxBitLength > 18) {
+    return null
+  }
+  const decoder = new RAnsSymbolDecoder(maxBitLength)
+  if (!decoder.create(srcBuffer)) {
+    return null
+  }
+  if (numValues > 0 && decoder.numSymbols === 0) {
+    return null
+  }
+  if (!decoder.startDecoding(srcBuffer)) {
+    return null
+  }
+  return decoder
 }
 
 function decodeRawSymbolsInternal(

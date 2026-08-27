@@ -9,6 +9,7 @@ import { SequentialQuantizationAttributeDecoder } from './SequentialQuantization
 
 import type { PointAttribute } from '../../attributes/PointAttribute'
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
+import type { PendingSymbolStream } from './SequentialAttributeDecoder'
 
 // Structural interface satisfied by LinearSequencer and MeshTraversalSequencer.
 export interface PointsSequencer {
@@ -55,6 +56,13 @@ class SequentialAttributeDecodersController extends AttributesDecoder {
   }
 
   override decodeAttributes(buffer: DecoderBuffer): boolean {
+    if (!this._prepareSequence()) {
+      return false
+    }
+    return super.decodeAttributes(buffer)
+  }
+
+  _prepareSequence(): boolean {
     if (!this._sequencer) {
       return false
     }
@@ -70,7 +78,47 @@ class SequentialAttributeDecodersController extends AttributesDecoder {
         return false
       }
     }
-    return super.decodeAttributes(buffer)
+    return true
+  }
+
+  // Two-phase decode (see AttributesDecoder): parse everything that reads the
+  // buffer -- sequence, portable headers (deferring raw rANS symbol decodes),
+  // and the transform parameters -- so the deferred streams of ALL attributes
+  // decoders can then be paired, and finish (zigzag, prediction, inverse
+  // transform) runs per decoder in the original order afterwards. None of the
+  // finish work reads the buffer, and dependents only read parent portable
+  // VALUES in finish, so ordering and output stay identical.
+  override decodeAttributesParse(buffer: DecoderBuffer): boolean {
+    if (!this._prepareSequence()) {
+      return false
+    }
+    const numAttributes = this.getNumAttributes()
+    for (let i = 0; i < numAttributes; i++) {
+      if (!this._sequentialDecoders[i]!.decodePortableAttributeParse(this._pointIds, buffer)) {
+        return false
+      }
+    }
+    return this.decodeDataNeededByPortableTransforms(buffer)
+  }
+
+  override collectPendingSymbolStreams(out: PendingSymbolStream[]): void {
+    const numAttributes = this.getNumAttributes()
+    for (let i = 0; i < numAttributes; i++) {
+      const pending = this._sequentialDecoders[i]!.pendingSymbolStream()
+      if (pending !== null) {
+        out.push(pending)
+      }
+    }
+  }
+
+  override decodeAttributesFinish(): boolean {
+    const numAttributes = this.getNumAttributes()
+    for (let i = 0; i < numAttributes; i++) {
+      if (!this._sequentialDecoders[i]!.decodePortableAttributeFinish()) {
+        return false
+      }
+    }
+    return this.transformAttributesToOriginalFormat()
   }
 
   override getPortableAttribute(pointAttributeId: number): PointAttribute | null {

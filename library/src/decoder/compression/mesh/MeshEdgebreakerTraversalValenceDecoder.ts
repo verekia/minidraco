@@ -2,7 +2,10 @@
 
 import { scratchInt32Filled, scratchUint32 } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
-import { decodeSymbols } from '../entropy/SymbolDecoding'
+import { SymbolCodingMethod } from '../config/CompressionShared'
+import { ransDecodeSymbolsPairU8, ransDecodeSymbolsTrioU8 } from '../entropy/ANSCoding'
+import { RAnsSymbolDecoder } from '../entropy/RAnsSymbolDecoder'
+import { decodeTaggedSymbols } from '../entropy/SymbolDecoding'
 import {
   TOPOLOGY_C,
   TOPOLOGY_S,
@@ -87,6 +90,16 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     this._contextSymbols = new Array<Uint32Array>(numUniqueValences)
     this._contextCounters = new Int32Array(numUniqueValences)
 
+    // The per-valence-context symbol streams are independent rANS streams laid
+    // out back to back, and every cursor movement below is size-driven -- so
+    // all six can be header-parsed first and then decoded two at a time.
+    // Interleaving two streams overlaps their serial per-symbol dependency
+    // chains in the CPU pipeline (the single-stream loop is latency-bound),
+    // and produces bit-identical output since each stream's bytes and
+    // destination are untouched. Non-raw or mixed-width streams (never emitted
+    // by real encoders for these tiny alphabets) fall back to the sequential
+    // path via pendingFallback.
+    const pending: { decoder: RAnsSymbolDecoder; out: Uint32Array; count: number }[] = []
     for (let i = 0; i < numUniqueValences; ++i) {
       const numSymbols = decodeVarint(outBuffer)
       if (numSymbols === undefined) {
@@ -96,17 +109,81 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
         return false
       }
       if (numSymbols > 0) {
-        // Decode-scoped scratch; decodeSymbols writes every entry.
+        // Decode-scoped scratch; the rANS decode writes every entry.
         this._contextSymbols[i] = scratchUint32(numSymbols)
-        if (!decodeSymbols(numSymbols, 1, outBuffer, this._contextSymbols[i])) {
+        // Inlined decodeSymbols header parse (raw scheme only; tagged coding
+        // is for multi-component attributes and never used here).
+        const scheme = outBuffer.decodeUint8()
+        if (scheme === SymbolCodingMethod.SYMBOL_CODING_TAGGED) {
+          // Never emitted by real encoders for these tiny alphabets, but legal
+          // -- decode it on the spot through the standard path.
+          if (!decodeTaggedSymbols(numSymbols, 1, outBuffer, this._contextSymbols[i])) {
+            return false
+          }
+          this._contextCounters[i] = numSymbols
+          continue
+        }
+        if (scheme !== SymbolCodingMethod.SYMBOL_CODING_RAW) {
           return false
         }
+        const maxBitLength = outBuffer.decodeUint8()
+        if (maxBitLength === undefined || maxBitLength < 1 || maxBitLength > 18) {
+          return false
+        }
+        const decoder = new RAnsSymbolDecoder(maxBitLength)
+        if (!decoder.create(outBuffer)) {
+          return false
+        }
+        if (decoder.numSymbols === 0) {
+          return false
+        }
+        if (!decoder.startDecoding(outBuffer)) {
+          return false
+        }
+        pending.push({ decoder, out: this._contextSymbols[i], count: numSymbols })
         // All symbols are going to be processed from the back.
         this._contextCounters[i] = numSymbols
       } else {
         this._contextSymbols[i] = new Uint32Array(0)
         this._contextCounters[i] = 0
       }
+    }
+
+    // Decode three streams in lockstep while possible (the six contexts make
+    // two clean trios), then pairs, then a lone leftover; non-Uint8 luts
+    // (never produced for these alphabets) decode alone.
+    const allU8 = pending.every(entry => entry.decoder.ans_.lutTable instanceof Uint8Array)
+    let p = 0
+    if (allU8) {
+      while (pending.length - p >= 3) {
+        const a = pending[p]
+        const b = pending[p + 1]
+        const c = pending[p + 2]
+        ransDecodeSymbolsTrioU8(
+          a.decoder.ans_,
+          a.out,
+          a.count,
+          b.decoder.ans_,
+          b.out,
+          b.count,
+          c.decoder.ans_,
+          c.out,
+          c.count,
+        )
+        p += 3
+      }
+      if (pending.length - p === 2) {
+        const a = pending[p]
+        const b = pending[p + 1]
+        ransDecodeSymbolsPairU8(a.decoder.ans_, a.out, a.count, b.decoder.ans_, b.out, b.count)
+        p += 2
+      }
+    }
+    for (; p < pending.length; ++p) {
+      pending[p].decoder.ans_.decodeSymbols(pending[p].out, pending[p].count)
+    }
+    for (const entry of pending) {
+      entry.decoder.endDecoding()
     }
     return true
   }
