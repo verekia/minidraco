@@ -35,7 +35,8 @@ export function decodeTaggedSymbols(
   outValues: Uint32Array,
 ): boolean {
   const tagDecoder = new RAnsSymbolDecoder(5)
-  if (!tagDecoder.create(srcBuffer)) {
+  // One tag per value group.
+  if (!tagDecoder.create(srcBuffer, Math.ceil(numValues / numComponents))) {
     return false
   }
 
@@ -119,7 +120,7 @@ export function parseRawSymbolStream(numValues: number, srcBuffer: DecoderBuffer
     return null
   }
   const decoder = new RAnsSymbolDecoder(maxBitLength)
-  if (!decoder.create(srcBuffer)) {
+  if (!decoder.create(srcBuffer, numValues)) {
     return null
   }
   if (numValues > 0 && decoder.numSymbols === 0) {
@@ -138,7 +139,7 @@ function decodeRawSymbolsInternal(
   outValues: Uint32Array,
 ): boolean {
   const decoder = new RAnsSymbolDecoder(uniqueSymbolsBitLength)
-  if (!decoder.create(srcBuffer)) {
+  if (!decoder.create(srcBuffer, numValues)) {
     return false
   }
 

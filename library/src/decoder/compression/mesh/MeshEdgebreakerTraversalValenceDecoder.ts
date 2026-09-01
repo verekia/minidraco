@@ -131,7 +131,7 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
           return false
         }
         const decoder = new RAnsSymbolDecoder(maxBitLength)
-        if (!decoder.create(outBuffer)) {
+        if (!decoder.create(outBuffer, numSymbols)) {
           return false
         }
         if (decoder.numSymbols === 0) {
@@ -150,39 +150,43 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     }
 
     // Decode three streams in lockstep while possible (the six contexts make
-    // two clean trios), then pairs, then a lone leftover; non-Uint8 luts
-    // (never produced for these alphabets) decode alone.
-    const allU8 = pending.every(entry => entry.decoder.ans_.lutTable instanceof Uint8Array)
+    // two clean trios), then pairs, then a lone leftover. Only Uint8-lut
+    // streams take part: short streams that chose the coarse tables (see
+    // ransBuildLookUpTable) and non-Uint8 luts (never produced for these
+    // alphabets) decode alone, without dragging the big streams out of the
+    // lockstep loops.
+    const lockstep = pending.filter(entry => entry.decoder.ans_.lutTable instanceof Uint8Array)
     let p = 0
-    if (allU8) {
-      while (pending.length - p >= 3) {
-        const a = pending[p]
-        const b = pending[p + 1]
-        const c = pending[p + 2]
-        ransDecodeSymbolsTrioU8(
-          a.decoder.ans_,
-          a.out,
-          a.count,
-          b.decoder.ans_,
-          b.out,
-          b.count,
-          c.decoder.ans_,
-          c.out,
-          c.count,
-        )
-        p += 3
-      }
-      if (pending.length - p === 2) {
-        const a = pending[p]
-        const b = pending[p + 1]
-        ransDecodeSymbolsPairU8(a.decoder.ans_, a.out, a.count, b.decoder.ans_, b.out, b.count)
-        p += 2
-      }
+    while (lockstep.length - p >= 3) {
+      const a = lockstep[p]
+      const b = lockstep[p + 1]
+      const c = lockstep[p + 2]
+      ransDecodeSymbolsTrioU8(
+        a.decoder.ans_,
+        a.out,
+        a.count,
+        b.decoder.ans_,
+        b.out,
+        b.count,
+        c.decoder.ans_,
+        c.out,
+        c.count,
+      )
+      p += 3
     }
-    for (; p < pending.length; ++p) {
-      pending[p].decoder.ans_.decodeSymbols(pending[p].out, pending[p].count)
+    if (lockstep.length - p === 2) {
+      const a = lockstep[p]
+      const b = lockstep[p + 1]
+      ransDecodeSymbolsPairU8(a.decoder.ans_, a.out, a.count, b.decoder.ans_, b.out, b.count)
+      p += 2
+    }
+    for (; p < lockstep.length; ++p) {
+      lockstep[p].decoder.ans_.decodeSymbols(lockstep[p].out, lockstep[p].count)
     }
     for (const entry of pending) {
+      if (!(entry.decoder.ans_.lutTable instanceof Uint8Array)) {
+        entry.decoder.ans_.decodeSymbols(entry.out, entry.count)
+      }
       entry.decoder.endDecoding()
     }
     return true

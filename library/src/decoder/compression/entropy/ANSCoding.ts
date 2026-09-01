@@ -5,6 +5,12 @@ export const ANS_P8_PRECISION = 256
 export const ANS_L_BASE = 4096
 const ANS_IO_BASE = 256
 
+// Short-stream decoding (see RAnsDecoder.ransBuildLookUpTable): a stream whose
+// symbol count times this factor is below the rANS precision skips the full
+// lut for a 2^COARSE_BUCKET_BITS-entry bucket table.
+const COARSE_STREAM_FACTOR = 8
+const COARSE_BUCKET_BITS = 8
+
 function memGetLe16(buf: Uint8Array, offset: number): number {
   return buf[offset] | (buf[offset + 1] << 8)
 }
@@ -104,6 +110,13 @@ export class RAnsDecoder {
   lutTable: Uint8Array | Uint16Array | Uint32Array | null
   probTable: Uint32Array | null
   cumProbTable: Uint32Array | null
+  // Short-stream mode (see ransBuildLookUpTable): no full-precision lut; a
+  // 256-entry bucket table narrows each lookup to a symbol range that a short
+  // cumProb scan finishes. cumProbTable then carries one extra trailing entry
+  // (== ransPrecision) so the scan needs no bounds check.
+  coarse: boolean
+  bucketShift: number
+  bucketTable: Uint16Array | null
   buf: Uint8Array | null
   bufOffset: number
   // First valid byte of this decoder's slice within buf (absolute offsets,
@@ -119,6 +132,9 @@ export class RAnsDecoder {
     this.lutTable = null // Uint32Array
     this.probTable = null // Uint32Array, flat
     this.cumProbTable = null // Uint32Array, flat
+    this.coarse = false
+    this.bucketShift = 0
+    this.bucketTable = null
     // State inlined (not a nested AnsDecoder) so the ransRead() hot loop touches own props.
     this.buf = null
     this.bufOffset = 0
@@ -182,6 +198,10 @@ export class RAnsDecoder {
       tablePool.push(this.cumProbTable)
       this.cumProbTable = null
     }
+    if (this.bucketTable !== null) {
+      tablePool.push(this.bucketTable)
+      this.bucketTable = null
+    }
     return this.state === this.lRansBase
   }
 
@@ -197,7 +217,14 @@ export class RAnsDecoder {
     }
     const quo = state >>> this.ransPrecisionBits
     const rem = state & this.ransPrecisionMask
-    const symbol = this.lutTable![rem]
+    let symbol: number
+    if (this.coarse) {
+      const cumProbTable = this.cumProbTable!
+      symbol = this.bucketTable![rem >> this.bucketShift]
+      while (cumProbTable[symbol + 1] <= rem) symbol++
+    } else {
+      symbol = this.lutTable![rem]
+    }
     this.state = quo * this.probTable![symbol] + rem - this.cumProbTable![symbol]
     this.bufOffset = bufOffset
     return symbol
@@ -210,6 +237,10 @@ export class RAnsDecoder {
   // once here so each loop body stays monomorphic on its concrete type. The
   // three bodies are intentionally identical copies.
   decodeSymbols(out: Uint32Array, count: number): void {
+    if (this.coarse) {
+      this._decodeSymbolsCoarse(out, count)
+      return
+    }
     const lutTable = this.lutTable!
     if (lutTable instanceof Uint8Array) {
       this._decodeSymbolsU8(out, count, lutTable)
@@ -266,6 +297,34 @@ export class RAnsDecoder {
     this.bufOffset = bufOffset
   }
 
+  // Short-stream loop: bucket table + cumProb scan instead of the full lut.
+  // Same state arithmetic as the lut loops, so the output is identical.
+  _decodeSymbolsCoarse(out: Uint32Array, count: number): void {
+    const buf = this.buf!
+    const lRansBase = this.lRansBase
+    const ransPrecisionBits = this.ransPrecisionBits
+    const ransPrecisionMask = this.ransPrecisionMask
+    const probTable = this.probTable!
+    const cumProbTable = this.cumProbTable!
+    const bucketTable = this.bucketTable!
+    const bucketShift = this.bucketShift
+    let state = this.state
+    let bufOffset = this.bufOffset
+    const bufStart = this.bufStart
+    for (let i = 0; i < count; ++i) {
+      while (state < lRansBase && bufOffset > bufStart) {
+        state = (state << 8) | buf[--bufOffset]
+      }
+      const rem = state & ransPrecisionMask
+      let symbol = bucketTable[rem >> bucketShift]
+      while (cumProbTable[symbol + 1] <= rem) symbol++
+      out[i] = symbol
+      state = (state >>> ransPrecisionBits) * probTable[symbol] + rem - cumProbTable[symbol]
+    }
+    this.state = state
+    this.bufOffset = bufOffset
+  }
+
   _decodeSymbolsU32(out: Uint32Array, count: number, lutTable: Uint32Array): void {
     const buf = this.buf!
     const lRansBase = this.lRansBase
@@ -289,29 +348,70 @@ export class RAnsDecoder {
     this.bufOffset = bufOffset
   }
 
-  // Builds the ransPrecision-entry lookup table. Returns false on bad input data.
-  ransBuildLookUpTable(tokenProbs: Uint32Array, numSymbols: number): boolean {
+  // Builds the decoding tables. Returns false on bad input data.
+  //
+  // expectedCount is how many symbols the caller will decode from this stream.
+  // The full lut has ransPrecision (>= 4096) entries, and a primitive-heavy
+  // file builds thousands of them to decode a few dozen symbols each -- on such
+  // files the table builds cost more than the decodes. Short streams therefore
+  // get a coarse 256-entry bucket table (symbol at the start of each
+  // precision/256-wide bucket) and finish each lookup with a scan of the
+  // cumulative probabilities; long streams keep the exact lut, whose per-symbol
+  // cost is lower.
+  ransBuildLookUpTable(tokenProbs: Uint32Array, numSymbols: number, expectedCount: number = 0x7fffffff): boolean {
+    const ransPrecision = this.ransPrecision
+    const coarse = numSymbols <= 65535 && expectedCount * COARSE_STREAM_FACTOR < ransPrecision
+    this.coarse = coarse
+    // Pooled buffers may be oversized; every slot in the used range is written
+    // below (cumProb must land exactly on ransPrecision), so no clearing needed.
+    const probTable = acquirePooled(Uint32Array, numSymbols)
+    // One trailing entry (== ransPrecision) so the coarse scan needs no bound.
+    const cumProbTable = acquirePooled(Uint32Array, numSymbols + 1)
+    this.probTable = probTable
+    this.cumProbTable = cumProbTable
+    let cumProb = 0
+    if (coarse) {
+      this.lutTable = null
+      for (let i = 0; i < numSymbols; ++i) {
+        const prob = tokenProbs[i]
+        probTable[i] = prob
+        cumProbTable[i] = cumProb
+        cumProb += prob
+        if (cumProb > ransPrecision) {
+          return false
+        }
+      }
+      if (cumProb !== ransPrecision) {
+        return false
+      }
+      cumProbTable[numSymbols] = ransPrecision
+      const bucketShift = this.ransPrecisionBits - COARSE_BUCKET_BITS
+      const bucketTable = acquirePooled(Uint16Array, 1 << COARSE_BUCKET_BITS)
+      this.bucketShift = bucketShift
+      this.bucketTable = bucketTable
+      let symbol = 0
+      for (let b = 0; b < 1 << COARSE_BUCKET_BITS; ++b) {
+        const rem = b << bucketShift
+        while (cumProbTable[symbol + 1] <= rem) symbol++
+        bucketTable[b] = symbol
+      }
+      return true
+    }
+
     // lutTable is indexed by `rem` (random in [0, ransPrecision)), so it's the
     // hottest random read in decodeSymbols()/ransRead(). Its values are symbol
     // ids (< numSymbols), so pick the narrowest element type that holds them:
     // shrinking the table (up to 4x) keeps that random access closer to cache.
     const LutArray = numSymbols <= 256 ? Uint8Array : numSymbols <= 65536 ? Uint16Array : Uint32Array
-    // Pooled buffers may be oversized; every slot in the used range is written
-    // below (cumProb must land exactly on ransPrecision), so no clearing needed.
-    const lutTable = acquirePooled(LutArray as new (length: number) => Uint8Array, this.ransPrecision)
-    const probTable = acquirePooled(Uint32Array, numSymbols)
-    const cumProbTable = acquirePooled(Uint32Array, numSymbols)
+    const lutTable = acquirePooled(LutArray as new (length: number) => Uint8Array, ransPrecision)
     this.lutTable = lutTable
-    this.probTable = probTable
-    this.cumProbTable = cumProbTable
-    let cumProb = 0
     let actProb = 0
     for (let i = 0; i < numSymbols; ++i) {
       const prob = tokenProbs[i]
       probTable[i] = prob
       cumProbTable[i] = cumProb
       cumProb += prob
-      if (cumProb > this.ransPrecision) {
+      if (cumProb > ransPrecision) {
         return false
       }
       // Manual loop for short runs: fill()'s per-call overhead dominates them.
@@ -324,9 +424,10 @@ export class RAnsDecoder {
       }
       actProb = cumProb
     }
-    if (cumProb !== this.ransPrecision) {
+    if (cumProb !== ransPrecision) {
       return false
     }
+    cumProbTable[numSymbols] = ransPrecision
     return true
   }
 }

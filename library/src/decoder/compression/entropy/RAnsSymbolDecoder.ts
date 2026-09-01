@@ -31,8 +31,10 @@ export class RAnsSymbolDecoder {
     return this.numSymbols_
   }
 
-  // Initialize the decoder and decode the probability table.
-  create(buffer: DecoderBuffer): boolean {
+  // Initialize the decoder and decode the probability table. expectedCount is
+  // the number of symbols the caller will decode (lets short streams skip the
+  // full lookup table; see RAnsDecoder.ransBuildLookUpTable).
+  create(buffer: DecoderBuffer, expectedCount: number = 0x7fffffff): boolean {
     if (buffer.bitstreamVersion === 0) {
       return false
     }
@@ -87,7 +89,7 @@ export class RAnsSymbolDecoder {
     }
     buffer.advance(pos - startPos)
 
-    if (!this.ans_.ransBuildLookUpTable(this.probabilityTable_, this.numSymbols_)) {
+    if (!this.ans_.ransBuildLookUpTable(this.probabilityTable_, this.numSymbols_, expectedCount)) {
       return false
     }
     return true
