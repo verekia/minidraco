@@ -273,14 +273,21 @@ class PointCloudDecoder {
     for (let i = 0; i < decoders.length; i++) {
       decoders[i]!.collectPendingSymbolStreams(pending)
     }
+    // Short streams on the coarse tables (see ransBuildLookUpTable) decode
+    // alone; pairing them would only knock a lut stream out of the lockstep
+    // loop, and they are cheap either way.
+    const paired = pending.filter(stream => !stream.ans.coarse)
     let i = 0
-    for (; i + 1 < pending.length; i += 2) {
-      const a = pending[i]
-      const b = pending[i + 1]
+    for (; i + 1 < paired.length; i += 2) {
+      const a = paired[i]
+      const b = paired[i + 1]
       ransDecodeSymbolsPair(a.ans, a.out, a.count, b.ans, b.out, b.count)
     }
-    if (i < pending.length) {
-      pending[i].ans.decodeSymbols(pending[i].out, pending[i].count)
+    if (i < paired.length) {
+      paired[i].ans.decodeSymbols(paired[i].out, paired[i].count)
+    }
+    for (const stream of pending) {
+      if (stream.ans.coarse) stream.ans.decodeSymbols(stream.out, stream.count)
     }
 
     for (let k = 0; k < decoders.length; k++) {

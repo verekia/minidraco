@@ -23,15 +23,24 @@ class PredictionSchemeDeltaDecoder extends PredictionSchemeDecoder {
     numComponents: number,
     entryToPointIdMap: Int32Array,
   ): boolean {
-    this._transform.init(numComponents)
+    const transform = this._transform
+    transform.init(numComponents)
+
+    // Transforms that provide a fused loop (the canonicalized octahedral one,
+    // hot for normals) run the whole delta chain in one call instead of one
+    // virtual computeOriginalValue call per value.
+    if (transform.computeOriginalValuesDelta) {
+      transform.computeOriginalValuesDelta(inCorr, outData, size, numComponents)
+      return true
+    }
 
     // First element has an all-zero "predicted" value.
     const zeroVals = new Int32Array(numComponents)
-    this._transform.computeOriginalValue(zeroVals, 0, inCorr, 0, outData, 0)
+    transform.computeOriginalValue(zeroVals, 0, inCorr, 0, outData, 0)
 
     // D(i) = D(i-1) + correction(i).
     for (let i = numComponents; i < size; i += numComponents) {
-      this._transform.computeOriginalValue(outData, i - numComponents, inCorr, i, outData, i)
+      transform.computeOriginalValue(outData, i - numComponents, inCorr, i, outData, i)
     }
 
     return true

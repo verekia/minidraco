@@ -23,6 +23,11 @@ interface PredictionSchemeDecodingTransform {
   ): void
   getType?(): number
   quantizationBits?(): number
+  // Optional fused delta loop (value[i] = original(value[i-1], corr[i]) over
+  // the whole attribute). PredictionSchemeDeltaDecoder uses it when present so
+  // hot transforms avoid one virtual call per value; inCorr and outData may
+  // alias, so each correction must be read before its slot is written.
+  computeOriginalValuesDelta?(inCorr: Int32Array, outData: Int32Array, size: number, numComponents: number): void
 }
 
 /**
