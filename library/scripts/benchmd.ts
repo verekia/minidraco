@@ -39,6 +39,7 @@ interface BrowserSection {
 interface BrowserResults {
   singleThreaded?: BrowserSection
   multiThreaded?: BrowserSection
+  coldLoad?: BrowserSection
 }
 
 const repoRoot = resolve(import.meta.dir, '../..')
@@ -141,8 +142,9 @@ export const renderBenchMd = (bun: BunResults, browser: BrowserResults | null): 
       'Full `GLTFLoader.parse` time with long-lived loaders. Not an apples-to-apples decoder',
       'comparison: minidraco and the wasm decoder parallelize across 4-worker pools while draco.js',
       'decodes on the main thread — this measures what an app actually experiences, including',
-      `texture decode and scene-graph setup. Median of ${loader.timedRuns} runs after ${loader.warmupRuns} warmup, GLBs only`,
-      '(raw `.drc` files have no glTF container).',
+      `texture decode and scene-graph setup. Median of ${loader.timedRuns} runs after ${loader.warmupRuns} warmups`,
+      '(a fresh worker pool needs a few loads before its JIT settles — see the cold section for the',
+      'first load), GLBs only (raw `.drc` files have no glTF container).',
       '',
       `- Date: ${loader.date}`,
       `- Browser: ${shortBrowser(loader.runtime)}`,
@@ -152,6 +154,26 @@ export const renderBenchMd = (bun: BunResults, browser: BrowserResults | null): 
     )
   } else {
     lines.push('_No saved browser results — run the loader benchmark on the `/bench` page locally and save it._', '')
+  }
+
+  const cold = browser?.coldLoad
+  lines.push('## Browser — GLTFLoader cold first load (V8)', '')
+  if (cold) {
+    lines.push(
+      'The first load of a session: a fresh loader per trial (minidraco spawns and JIT-warms its',
+      'worker pool, the wasm decoder downloads and compiles its module), preloaded 300 ms before a',
+      `single \`GLTFLoader.parse\`. Median of ${cold.timedRuns} trials. draco.js has no pool or wasm to warm,`,
+      'so its column is a plain main-thread parse. Cold numbers swing more than warm ones: an idle',
+      'worker thread also restarts on a slow core on Apple Silicon.',
+      '',
+      `- Date: ${cold.date}`,
+      `- Browser: ${shortBrowser(cold.runtime)}`,
+      '',
+      ...resultsTable(cold.results),
+      '',
+    )
+  } else {
+    lines.push('_No saved browser results — run the cold-load benchmark on the `/bench` page locally and save it._', '')
   }
 
   lines.push(

@@ -6,7 +6,7 @@ import { Decoder as DracoJsDecoder } from 'draco.js/src/compression/Decode.js'
 import { DecoderBuffer as DracoJsDecoderBuffer } from 'draco.js/src/core/DecoderBuffer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
-import { getDracoLoader } from '../lib/loaders'
+import { createDracoLoader, getDracoLoader } from '../lib/loaders'
 import {
   decodeRawWithDraco3d,
   decodeRawWithDracoJs,
@@ -19,8 +19,16 @@ import type { RawPrimitive } from '../lib/raw-bench'
 
 const BUNDLE_MODELS = [{ name: 'manablade-bundle.glb', url: '/models/manablade-bundle.glb' }]
 
-const LOADER_WARMUP_RUNS = 1
+// The worker pools need several full parses before their JITs settle (a fresh
+// pool decodes this corpus 2-3x slower for its first ~4 loads), so the warm
+// section discards enough runs to measure steady state; the cold section below
+// measures the first load on purpose.
+const LOADER_WARMUP_RUNS = 5
 const LOADER_TIMED_RUNS = 5
+// Cold first load: a fresh loader per trial, preloaded this long before the
+// parse (stands in for the model download the pool would warm up behind).
+const COLD_TRIALS = 3
+const COLD_PRELOAD_MS = 300
 const RAW_WARMUP_RUNS = 3
 const RAW_TIMED_RUNS = 10
 
@@ -155,7 +163,7 @@ const buildResultsJson = (config: object, rows: BenchRow[]) => ({
   })),
 })
 
-type ResultsSection = 'singleThreaded' | 'multiThreaded'
+type ResultsSection = 'singleThreaded' | 'multiThreaded' | 'coldLoad'
 
 // In local dev, next.config.mjs runs a small companion server that merges
 // each section's results into BENCH.browser.json at the repo root, so V8
@@ -395,10 +403,94 @@ const LoaderBenchSection = () => {
   )
 }
 
+// --- Cold first load (fresh loader per trial: worker spawn, wasm fetch/compile, JIT warm-up) ---
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+const ColdLoadBenchSection = () => {
+  const { models, sampleCount } = useBenchModels()
+  const [rows, setRows] = useState<BenchRow[]>([])
+  const [running, setRunning] = useState(false)
+  const [status, setStatus] = useState('')
+
+  const run = useCallback(async () => {
+    setRunning(true)
+    setRows([])
+    const results: BenchRow[] = []
+
+    try {
+      for (const model of models.filter(m => m.name.endsWith('.glb'))) {
+        const response = await fetch(model.url)
+        if (!response.ok) throw new Error(`${model.url}: HTTP ${response.status}`)
+        const bytes = await response.arrayBuffer()
+
+        const medianMs: Record<string, number> = {}
+        for (const { kind, label } of LOADER_KINDS) {
+          const trialsMs: number[] = []
+          for (let i = 0; i < COLD_TRIALS; i++) {
+            setStatus(`${model.name} — ${label} (cold trial ${i + 1}/${COLD_TRIALS})…`)
+            // A brand-new loader each time, the way an app's first load sees
+            // it: workers spawn and warm up, wasm downloads and compiles.
+            const dracoLoader = createDracoLoader(kind)
+            dracoLoader.preload()
+            await sleep(COLD_PRELOAD_MS)
+            const gltfLoader = new GLTFLoader()
+            gltfLoader.setDRACOLoader(dracoLoader)
+            const start = performance.now()
+            await gltfLoader.parseAsync(bytes.slice(0), '')
+            trialsMs.push(performance.now() - start)
+            dracoLoader.dispose()
+            await sleep(100)
+          }
+          medianMs[label] = median(trialsMs)
+        }
+
+        results.push({ model: model.name, medianMs })
+        setRows([...results])
+      }
+      setStatus('Done')
+    } catch (error) {
+      setStatus(String(error))
+    } finally {
+      setRunning(false)
+    }
+  }, [models])
+
+  return (
+    <section className="mt-12">
+      <h2 className="mb-2 text-lg font-semibold">GLTFLoader — cold first load</h2>
+      <p className="mb-1 max-w-xl text-sm text-neutral-400">
+        What the first load of a session costs: a fresh loader per trial (worker pool spawned and JIT-warming, or wasm
+        fetched and compiled), preloaded {COLD_PRELOAD_MS} ms before a single GLTFLoader.parse. Median of {COLD_TRIALS}{' '}
+        trials. draco.js has no pool or wasm to warm, so its number is just a main-thread parse.
+      </p>
+      <CorpusNote sampleCount={sampleCount} glbOnly />
+      <RunButton running={running} onClick={run} label="Run cold-load benchmark" />
+      <p className="mb-4 text-sm text-neutral-400">{status}</p>
+      <BenchTable rows={rows} />
+      {!running && (
+        <ResultsActions
+          section="coldLoad"
+          config={{
+            benchmark: `GLTFLoader wall clock, fresh loader per trial preloaded ${COLD_PRELOAD_MS} ms before the parse`,
+            warmupRuns: 0,
+            timedRuns: COLD_TRIALS,
+          }}
+          rows={rows}
+          canSave={(sampleCount ?? 0) > 0}
+        />
+      )}
+    </section>
+  )
+}
+
 const BenchPage = () => {
   // Raw-decoder debug handles for scripted pure-decode benchmarks (no GLTF
   // parse overhead) from the devtools console / automated browser checks.
   useEffect(() => {
+    // Loader-level handles (long-lived pooled loaders + GLTFLoader) for
+    // scripted wall-clock / pool-overlap measurements from the console.
+    ;(window as any).__loaders = { getDracoLoader, GLTFLoader }
     ;(window as any).__decoders = {
       minidraco: (data: Uint8Array) => decodeDracoMesh(data),
       dracoJs: (data: Uint8Array) => {
@@ -416,6 +508,7 @@ const BenchPage = () => {
       <h1 className="mb-8 text-xl font-semibold">minidraco in-browser benchmark</h1>
       <RawBenchSection />
       <LoaderBenchSection />
+      <ColdLoadBenchSection />
     </div>
   )
 }

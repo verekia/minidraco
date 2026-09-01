@@ -34,7 +34,7 @@ const startBenchResultsServer = () => {
     req.on('end', () => {
       try {
         const { section, data } = JSON.parse(body)
-        if (section !== 'singleThreaded' && section !== 'multiThreaded') {
+        if (section !== 'singleThreaded' && section !== 'multiThreaded' && section !== 'coldLoad') {
           return res.writeHead(400).end('unknown section')
         }
 
