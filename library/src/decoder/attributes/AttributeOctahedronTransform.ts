@@ -12,7 +12,6 @@ import type { PointAttribute } from './PointAttribute'
 
 class AttributeOctahedronTransform extends AttributeTransform {
   _quantizationBits: number
-  _tmpVec?: Float32Array
 
   constructor() {
     super()
@@ -56,15 +55,38 @@ class AttributeOctahedronTransform extends AttributeTransform {
     const dstAddr = targetAttribute.getAddress(0)
     const dstF32 = new Float32Array(dstAddr.buffer, dstAddr.byteOffset, numPoints * 3)
 
-    const outVec = this._tmpVec || (this._tmpVec = new Float32Array(3))
+    // OctahedronToolBox.quantizedOctahedralCoordsToUnitVector inlined (keep in
+    // sync): one loop writing straight into the float32 view instead of two
+    // calls and a 3-element temp per point. Every Math.fround is kept exactly
+    // where the toolbox has it -- that float32 rounding sequence is what makes
+    // the normals bit-identical to the WASM decoder.
+    const fround = Math.fround
+    const scale = toolBox._dequantizationScale
     let si = 0
     let di = 0
     for (let i = 0; i < numPoints; i++) {
-      toolBox.quantizedOctahedralCoordsToUnitVector(srcI32[si], srcI32[si + 1], outVec)
+      let y = fround(fround(fround(srcI32[si]) * scale) - 1.0)
+      let z = fround(fround(fround(srcI32[si + 1]) * scale) - 1.0)
       si += 2
-      dstF32[di] = outVec[0]
-      dstF32[di + 1] = outVec[1]
-      dstF32[di + 2] = outVec[2]
+      const x = fround(fround(1.0 - Math.abs(y)) - Math.abs(z))
+
+      let xOffset = -x
+      if (xOffset < 0) xOffset = 0
+
+      y = fround(y + (y < 0 ? xOffset : -xOffset))
+      z = fround(z + (z < 0 ? xOffset : -xOffset))
+
+      const normSquared = fround(fround(fround(x * x) + fround(y * y)) + fround(z * z))
+      if (normSquared < 1e-6) {
+        dstF32[di] = 0
+        dstF32[di + 1] = 0
+        dstF32[di + 2] = 0
+      } else {
+        const d = fround(1.0 / fround(Math.sqrt(normSquared)))
+        dstF32[di] = fround(x * d)
+        dstF32[di + 1] = fround(y * d)
+        dstF32[di + 2] = fround(z * d)
+      }
       di += 3
     }
     return true
