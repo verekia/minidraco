@@ -50,10 +50,10 @@ class AttributeOctahedronTransform extends AttributeTransform {
     // holds float32 unit vectors (3 per point). Attribute buffers start at
     // byteOffset 0, so typed-array views are aligned -- read/write directly,
     // avoiding a per-point DataView dispatch and per-entry buffer copy.
-    const srcAddr = attribute.getAddress(0)
-    const srcI32 = new Int32Array(srcAddr.buffer, srcAddr.byteOffset, numPoints * 2)
-    const dstAddr = targetAttribute.getAddress(0)
-    const dstF32 = new Float32Array(dstAddr.buffer, dstAddr.byteOffset, numPoints * 3)
+    const srcData = attribute.buffer!.data
+    const srcI32 = new Int32Array(srcData.buffer, srcData.byteOffset + attribute.byteOffset, numPoints * 2)
+    const dstData = targetAttribute.buffer!.data
+    const dstF32 = new Float32Array(dstData.buffer, dstData.byteOffset + targetAttribute.byteOffset, numPoints * 3)
 
     // OctahedronToolBox.quantizedOctahedralCoordsToUnitVector inlined (keep in
     // sync): one loop writing straight into the float32 view instead of two

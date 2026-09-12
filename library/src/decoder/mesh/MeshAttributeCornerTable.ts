@@ -100,6 +100,16 @@ class MeshAttributeCornerTable {
     return this._recomputeVerticesInternal()
   }
 
+  // Installs attribute-vertex numbering computed externally (the edgebreaker
+  // decoder's fused ring pass fills corner_to_vertex_map_ directly and hands
+  // over the per-vertex left-most corners here). leftMostMap is decode-scoped
+  // scratch sized for at least numNewVertices entries.
+  setRecomputedVertices(leftMostMap: Int32Array, numNewVertices: number): void {
+    this.num_attribute_vertices_ = numNewVertices
+    this.vertex_to_left_most_corner_map_ =
+      leftMostMap.length === numNewVertices ? leftMostMap : leftMostMap.subarray(0, numNewVertices)
+  }
+
   // Only the C++ RecomputeVertices(nullptr, nullptr) path: the decoder always
   // rebuilds the attribute-vertex maps from connectivity alone.
   _recomputeVerticesInternal(): boolean {

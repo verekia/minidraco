@@ -124,6 +124,9 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     if (numComponents === 3) {
       return this._computeOriginalValuesWrap3(inCorr, outData, zigzag)
     }
+    if (numComponents === 4) {
+      return this._computeOriginalValuesWrap4(inCorr, outData, zigzag)
+    }
 
     const table = this._meshData.cornerTable
     const vertexToDataMap = this._meshData.vertexToDataMap
@@ -448,6 +451,122 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       outData[dstOffset] = orig0
       outData[dstOffset + 1] = orig1
       outData[dstOffset + 2] = orig2
+    }
+
+    return true
+  }
+
+  // Four components: tangents, RGBA colors, skin joints/weights. Same
+  // structure as the 2/3-component loops.
+  _computeOriginalValuesWrap4(inCorr: Int32Array, outData: Int32Array, zigzag: boolean): boolean {
+    const table = this._meshData.cornerTable
+    const vertexToDataMap = this._meshData.vertexToDataMap
+    const oppositeCorners = table.oppositeCornerArray() as Int32Array
+    const cornerToVertex = table.cornerToVertexArray() as Int32Array
+    const dataToCornerMap = this._meshData.dataToCornerMap
+    const transform = this._transform as PredictionSchemeWrapDecodingTransform
+    const minValue = transform._minValue
+    const maxValue = transform._maxValue
+    const maxDif = transform._maxDif
+    // The first value is predicted from zero (clamped into [min, max]).
+    let pred0 = 0
+    if (pred0 > maxValue) {
+      pred0 = maxValue
+    } else if (pred0 < minValue) {
+      pred0 = minValue
+    }
+    let pred1 = pred0
+    let pred2 = pred0
+    let pred3 = pred0
+    const cornerMapSize = dataToCornerMap.length
+    for (let p = 0; p < cornerMapSize; ++p) {
+      const dstOffset = p * 4
+      if (p > 0) {
+        const cornerId = dataToCornerMap[p]
+        const oci = oppositeCorners[cornerId]
+        let hasPrediction = false
+        let vOppOff = 0
+        let vNextOff = 0
+        let vPrevOff = 0
+        if (oci >= 0) {
+          const rem = oci - ((oci / 3) | 0) * 3
+          const nextOci = rem === 2 ? oci - 2 : oci + 1
+          const prevOci = rem === 0 ? oci + 2 : oci - 1
+          const vertOpp = vertexToDataMap[cornerToVertex[oci]]
+          const vertNext = vertexToDataMap[cornerToVertex[nextOci]]
+          const vertPrev = vertexToDataMap[cornerToVertex[prevOci]]
+          if (vertOpp < p && vertNext < p && vertPrev < p) {
+            vOppOff = vertOpp * 4
+            vNextOff = vertNext * 4
+            vPrevOff = vertPrev * 4
+            hasPrediction = true
+          }
+        }
+        if (hasPrediction) {
+          pred0 = (outData[vNextOff] + outData[vPrevOff] - outData[vOppOff]) | 0
+          pred1 = (outData[vNextOff + 1] + outData[vPrevOff + 1] - outData[vOppOff + 1]) | 0
+          pred2 = (outData[vNextOff + 2] + outData[vPrevOff + 2] - outData[vOppOff + 2]) | 0
+          pred3 = (outData[vNextOff + 3] + outData[vPrevOff + 3] - outData[vOppOff + 3]) | 0
+        } else {
+          const srcOffset = dstOffset - 4
+          pred0 = outData[srcOffset]
+          pred1 = outData[srcOffset + 1]
+          pred2 = outData[srcOffset + 2]
+          pred3 = outData[srcOffset + 3]
+        }
+        if (pred0 > maxValue) {
+          pred0 = maxValue
+        } else if (pred0 < minValue) {
+          pred0 = minValue
+        }
+        if (pred1 > maxValue) {
+          pred1 = maxValue
+        } else if (pred1 < minValue) {
+          pred1 = minValue
+        }
+        if (pred2 > maxValue) {
+          pred2 = maxValue
+        } else if (pred2 < minValue) {
+          pred2 = minValue
+        }
+        if (pred3 > maxValue) {
+          pred3 = maxValue
+        } else if (pred3 < minValue) {
+          pred3 = minValue
+        }
+      }
+      const rawA = inCorr[dstOffset]
+      const rawB = inCorr[dstOffset + 1]
+      const rawC = inCorr[dstOffset + 2]
+      const rawD = inCorr[dstOffset + 3]
+      let orig0 = (pred0 + (zigzag ? (rawA >>> 1) ^ -(rawA & 1) : rawA)) | 0
+      let orig1 = (pred1 + (zigzag ? (rawB >>> 1) ^ -(rawB & 1) : rawB)) | 0
+      let orig2 = (pred2 + (zigzag ? (rawC >>> 1) ^ -(rawC & 1) : rawC)) | 0
+      let orig3 = (pred3 + (zigzag ? (rawD >>> 1) ^ -(rawD & 1) : rawD)) | 0
+      if (orig0 > maxValue) {
+        orig0 -= maxDif
+      } else if (orig0 < minValue) {
+        orig0 += maxDif
+      }
+      if (orig1 > maxValue) {
+        orig1 -= maxDif
+      } else if (orig1 < minValue) {
+        orig1 += maxDif
+      }
+      if (orig2 > maxValue) {
+        orig2 -= maxDif
+      } else if (orig2 < minValue) {
+        orig2 += maxDif
+      }
+      if (orig3 > maxValue) {
+        orig3 -= maxDif
+      } else if (orig3 < minValue) {
+        orig3 += maxDif
+      }
+      outData[dstOffset] = orig0
+      outData[dstOffset + 1] = orig1
+      outData[dstOffset + 2] = orig2
+      outData[dstOffset + 3] = orig3
     }
 
     return true

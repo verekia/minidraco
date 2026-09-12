@@ -30,6 +30,7 @@ class MaxPredictionDegreeTraverser {
   _cornerToVertex: Int32Array | number[] | null
   _oppositeCorners: Int32Array | number[] | null
   _traversalMethodId: number
+  emitsPointIds: boolean
 
   constructor() {
     this._cornerTable = null
@@ -48,6 +49,8 @@ class MaxPredictionDegreeTraverser {
     // Identifies the traversal order for the shared traversal cache
     // (MESH_TRAVERSAL_PREDICTION_DEGREE). See MeshTraversalSequencer.
     this._traversalMethodId = 1
+    // Point ids are appended through the observer as vertices are visited.
+    this.emitsPointIds = true
   }
 
   init(cornerTable: CornerTable | MeshAttributeCornerTable, observer: MeshAttributeIndicesEncodingObserver): void {
@@ -79,6 +82,19 @@ class MaxPredictionDegreeTraverser {
   }
 
   onTraversalEnd(): void {}
+
+  // Same contract as DepthFirstTraverser.traverseAll. Seeds every face
+  // through traverseFromCorner (which re-checks the first face's vertices),
+  // exactly as the sequencer's loop always has.
+  traverseAll(): boolean {
+    const numFaces = this._cornerTable!.numFaces()
+    for (let f = 0; f < numFaces && this._numVisitedFaces < numFaces; ++f) {
+      if (!this.traverseFromCorner(3 * f)) {
+        return false
+      }
+    }
+    return true
+  }
 
   // Returns the priority of traversing the edge leading to cornerId. Mutates
   // the prediction degree of the destination vertex.

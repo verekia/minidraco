@@ -2,27 +2,24 @@
 
 import { AttributeTransformType } from './AttributeTransformType'
 
-// Initial parameter-buffer capacity: a quantization transform appends
-// 1 + numComponents + 1 values of 4 bytes, so 32 bytes covers every attribute
-// the decoder produces without a single grow.
-const INITIAL_CAPACITY = 32
-
+// Parameters are kept as (value, type) pairs and serialized to their
+// little-endian byte layout only when `data` is read: every attribute of
+// every primitive appends a handful of values here, and building a byte
+// buffer plus a DataView per attribute up front was measurable on
+// primitive-heavy files while nothing in the decoder reads the bytes back.
 class AttributeTransformData {
   _transformType: number
-  // Parameter bytes, little-endian, appended in transform-defined order.
-  // Capacity grows geometrically and the DataView is cached alongside it: the
-  // previous DataBuffer-backed version reallocated the buffer and built a
-  // fresh DataView on *every* appended value, which on primitive-heavy files
-  // cost more than the dequantization it describes.
-  _bytes: Uint8Array
-  _view: DataView
+  _values: number[]
+  _types: string[]
   _size: number
+  _bytes: Uint8Array | null
 
   constructor() {
     this._transformType = AttributeTransformType.INVALID
-    this._bytes = new Uint8Array(INITIAL_CAPACITY)
-    this._view = new DataView(this._bytes.buffer)
+    this._values = []
+    this._types = []
     this._size = 0
+    this._bytes = null
   }
 
   get transformType(): number {
@@ -38,27 +35,23 @@ class AttributeTransformData {
     return this._size
   }
 
+  // Parameter bytes, little-endian, in append order.
   get data(): Uint8Array {
-    return this._bytes.subarray(0, this._size)
-  }
-
-  _reserve(sizeNeeded: number): void {
-    if (sizeNeeded <= this._bytes.length) return
-    let capacity = this._bytes.length * 2
-    if (capacity < sizeNeeded) capacity = sizeNeeded
-    const grown = new Uint8Array(capacity)
-    grown.set(this._bytes)
-    this._bytes = grown
-    this._view = new DataView(grown.buffer)
-  }
-
-  setParameterValue(byteOffset: number, value: number, type: string): void {
-    const sizeNeeded = byteOffset + this._typeSize(type)
-    this._reserve(sizeNeeded)
-    if (sizeNeeded > this._size) {
-      this._size = sizeNeeded
+    if (this._bytes === null) {
+      const bytes = new Uint8Array(this._size)
+      const view = new DataView(bytes.buffer)
+      let offset = 0
+      for (let i = 0; i < this._values.length; ++i) {
+        const type = this._types[i]
+        AttributeTransformData._write(view, offset, this._values[i], type)
+        offset += AttributeTransformData._typeSize(type)
+      }
+      this._bytes = bytes
     }
-    const view = this._view
+    return this._bytes
+  }
+
+  static _write(view: DataView, byteOffset: number, value: number, type: string): void {
     switch (type) {
       case 'int32':
         view.setInt32(byteOffset, value, true)
@@ -90,11 +83,34 @@ class AttributeTransformData {
     }
   }
 
+  // Writes a value at a byte offset. Appends (the decoder's only use) are
+  // recorded as pairs; a write anywhere else materializes the bytes first.
+  setParameterValue(byteOffset: number, value: number, type: string): void {
+    if (byteOffset === this._size && this._bytes === null) {
+      this._values.push(value)
+      this._types.push(type)
+      this._size += AttributeTransformData._typeSize(type)
+      return
+    }
+    const sizeNeeded = byteOffset + AttributeTransformData._typeSize(type)
+    const current = this.data
+    let bytes = current
+    if (sizeNeeded > current.length) {
+      bytes = new Uint8Array(sizeNeeded)
+      bytes.set(current)
+    }
+    AttributeTransformData._write(new DataView(bytes.buffer), byteOffset, value, type)
+    this._bytes = bytes
+    if (sizeNeeded > this._size) {
+      this._size = sizeNeeded
+    }
+  }
+
   appendParameterValue(value: number, type: string): void {
     this.setParameterValue(this._size, value, type)
   }
 
-  _typeSize(type: string): number {
+  static _typeSize(type: string): number {
     switch (type) {
       case 'int8':
       case 'uint8':
@@ -111,6 +127,10 @@ class AttributeTransformData {
       default:
         return 4
     }
+  }
+
+  _typeSize(type: string): number {
+    return AttributeTransformData._typeSize(type)
   }
 }
 
