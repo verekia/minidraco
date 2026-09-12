@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { decodeDracoMesh } from 'minidraco'
 
@@ -170,6 +170,46 @@ type ResultsSection = 'singleThreaded' | 'multiThreaded' | 'coldLoad'
 // runs are tracked in git next to the bun results
 const BENCH_RESULTS_URL = 'http://localhost:41999'
 
+const saveResults = async (section: ResultsSection, config: object, rows: BenchRow[]) => {
+  const response = await fetch(BENCH_RESULTS_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ section, data: buildResultsJson(config, rows) }),
+  })
+  if (!response.ok) throw new Error(await response.text())
+}
+
+// `?run=raw|loader|cold` starts that section as soon as the corpus manifest
+// is known, and `&save=1` saves its results when it finishes -- so a full run
+// can happen in a plain browser window with nothing attached to it. (With a
+// DevTools session attached, V8 keeps wasm in its baseline tier, which makes
+// the wasm column ~2x slower than it is for a real page.)
+const useAutorun = (
+  key: string,
+  ready: boolean,
+  run: () => Promise<BenchRow[] | undefined>,
+  section: ResultsSection,
+  config: object,
+  setStatus: (status: string) => void,
+) => {
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current || !ready) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('run') !== key) return
+    started.current = true
+    run().then(async rows => {
+      if (rows === undefined || params.get('save') !== '1') return
+      try {
+        await saveResults(section, config, rows)
+        setStatus('Done — saved to BENCH.browser.json')
+      } catch (error) {
+        setStatus(`Save failed: ${String(error)}`)
+      }
+    })
+  }, [key, ready, run, section, config, setStatus])
+}
+
 const ResultsActions = ({
   section,
   config,
@@ -194,12 +234,7 @@ const ResultsActions = ({
 
   const save = async () => {
     try {
-      const response = await fetch(BENCH_RESULTS_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ section, data: buildResultsJson(config, rows) }),
-      })
-      if (!response.ok) throw new Error(await response.text())
+      await saveResults(section, config, rows)
       setSaveState('saved')
     } catch {
       setSaveState('error')
@@ -224,6 +259,12 @@ const ResultsActions = ({
 }
 
 // --- Raw single-threaded decode benchmark ---
+
+const RAW_CONFIG = {
+  benchmark: 'raw decode, all decoders sync on main thread',
+  warmupRuns: RAW_WARMUP_RUNS,
+  timedRuns: RAW_TIMED_RUNS,
+}
 
 const RawBenchSection = () => {
   const { models, sampleCount } = useBenchModels()
@@ -279,12 +320,16 @@ const RawBenchSection = () => {
         setRows([...results])
       }
       setStatus('Done')
+      return results
     } catch (error) {
       setStatus(String(error))
     } finally {
       setRunning(false)
     }
+    return undefined
   }, [models])
+
+  useAutorun('raw', sampleCount !== null, run, 'singleThreaded', RAW_CONFIG, setStatus)
 
   return (
     <section className="mb-12">
@@ -299,16 +344,7 @@ const RawBenchSection = () => {
       <p className="mb-4 text-sm text-neutral-400">{status}</p>
       <BenchTable rows={rows} />
       {!running && (
-        <ResultsActions
-          section="singleThreaded"
-          config={{
-            benchmark: 'raw decode, all decoders sync on main thread',
-            warmupRuns: RAW_WARMUP_RUNS,
-            timedRuns: RAW_TIMED_RUNS,
-          }}
-          rows={rows}
-          canSave={(sampleCount ?? 0) > 0}
-        />
+        <ResultsActions section="singleThreaded" config={RAW_CONFIG} rows={rows} canSave={(sampleCount ?? 0) > 0} />
       )}
     </section>
   )
@@ -322,6 +358,12 @@ const LOADER_KINDS = [
   { kind: 'draco.js', label: 'draco.js' },
   { kind: 'draco3d', label: 'draco3d (wasm)' },
 ] as const
+
+const LOADER_CONFIG = {
+  benchmark: 'GLTFLoader wall clock; minidraco + wasm on 4-worker pools, draco.js main thread',
+  warmupRuns: LOADER_WARMUP_RUNS,
+  timedRuns: LOADER_TIMED_RUNS,
+}
 
 const LoaderBenchSection = () => {
   const { models, sampleCount } = useBenchModels()
@@ -367,12 +409,16 @@ const LoaderBenchSection = () => {
         setRows([...results])
       }
       setStatus('Done')
+      return results
     } catch (error) {
       setStatus(String(error))
     } finally {
       setRunning(false)
     }
+    return undefined
   }, [models])
+
+  useAutorun('loader', sampleCount !== null, run, 'multiThreaded', LOADER_CONFIG, setStatus)
 
   return (
     <section>
@@ -388,16 +434,7 @@ const LoaderBenchSection = () => {
       <p className="mb-4 text-sm text-neutral-400">{status}</p>
       <BenchTable rows={rows} />
       {!running && (
-        <ResultsActions
-          section="multiThreaded"
-          config={{
-            benchmark: 'GLTFLoader wall clock; minidraco + wasm on 4-worker pools, draco.js main thread',
-            warmupRuns: LOADER_WARMUP_RUNS,
-            timedRuns: LOADER_TIMED_RUNS,
-          }}
-          rows={rows}
-          canSave={(sampleCount ?? 0) > 0}
-        />
+        <ResultsActions section="multiThreaded" config={LOADER_CONFIG} rows={rows} canSave={(sampleCount ?? 0) > 0} />
       )}
     </section>
   )
@@ -406,6 +443,12 @@ const LoaderBenchSection = () => {
 // --- Cold first load (fresh loader per trial: worker spawn, wasm fetch/compile, JIT warm-up) ---
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+const COLD_CONFIG = {
+  benchmark: `GLTFLoader wall clock, fresh loader per trial preloaded ${COLD_PRELOAD_MS} ms before the parse`,
+  warmupRuns: 0,
+  timedRuns: COLD_TRIALS,
+}
 
 const ColdLoadBenchSection = () => {
   const { models, sampleCount } = useBenchModels()
@@ -449,12 +492,16 @@ const ColdLoadBenchSection = () => {
         setRows([...results])
       }
       setStatus('Done')
+      return results
     } catch (error) {
       setStatus(String(error))
     } finally {
       setRunning(false)
     }
+    return undefined
   }, [models])
+
+  useAutorun('cold', sampleCount !== null, run, 'coldLoad', COLD_CONFIG, setStatus)
 
   return (
     <section className="mt-12">
@@ -469,16 +516,7 @@ const ColdLoadBenchSection = () => {
       <p className="mb-4 text-sm text-neutral-400">{status}</p>
       <BenchTable rows={rows} />
       {!running && (
-        <ResultsActions
-          section="coldLoad"
-          config={{
-            benchmark: `GLTFLoader wall clock, fresh loader per trial preloaded ${COLD_PRELOAD_MS} ms before the parse`,
-            warmupRuns: 0,
-            timedRuns: COLD_TRIALS,
-          }}
-          rows={rows}
-          canSave={(sampleCount ?? 0) > 0}
-        />
+        <ResultsActions section="coldLoad" config={COLD_CONFIG} rows={rows} canSave={(sampleCount ?? 0) > 0} />
       )}
     </section>
   )
