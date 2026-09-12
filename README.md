@@ -45,15 +45,16 @@ Median across an 18-model corpus vs [draco.js](https://github.com/mrdoob/draco.j
 
 | benchmark                                          | vs draco.js     | vs draco3d wasm |
 | -------------------------------------------------- | --------------- | --------------- |
-| single-threaded decode — bun (JSC)                 | 🟢 1.34× faster | 🟢 1.45× faster |
-| single-threaded decode — Chrome (V8)               | 🟢 1.36× faster | 🟢 1.19× faster |
-| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.44× faster | ⚪ even         |
-| `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.60× faster | ⚪ even         |
+| single-threaded decode — bun (JSC)                 | 🟢 1.35× faster | 🟢 1.50× faster |
+| single-threaded decode — Chrome (V8)               | 🟢 1.33× faster | 🟢 1.19× faster |
+| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.46× faster | ⚪ even         |
+| `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.30× faster | 🟢 1.17× faster |
 
-Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and even with
-it in a real `GLTFLoader.parse` with the main thread left free — both warm and on the first load
-of a session, where minidraco's worker pool is still JIT-warming while the wasm decoder is
-fetching and compiling its module (no `draco_decoder.wasm` to host or download here).
+Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and level with
+it in a real `GLTFLoader.parse` with the main thread left free — warm, and level to ahead on the
+first load of a session (cold numbers swing run to run), where minidraco's worker pool is still
+JIT-warming while the wasm decoder is fetching and compiling its module (no `draco_decoder.wasm`
+to host or download here).
 
 ## Download size
 
