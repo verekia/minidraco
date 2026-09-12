@@ -1,7 +1,7 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerDecoderImpl.js (MIT)
 
 import { DecoderBuffer } from '../../core/DecoderBuffer'
-import { scratchInt32, scratchInt32Filled, scratchUint8Filled } from '../../core/ScratchArena'
+import { scratchInt32, scratchInt32Filled, scratchUint8Filled, scratchUint8Zeroed } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { MeshAttributeElementType } from '../../mesh/Mesh'
 import { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTable'
@@ -887,18 +887,18 @@ class MeshEdgebreakerDecoderImpl {
           if (oppCorner === kInvalidCornerIndex) {
             seamCorners[numSeamCorners++] = cc
           } else if (oppCorner >= corner) {
-            // Inlined RAnsBitDecoder.decodeNextBit().
+            // Inlined RAnsBitDecoder.decodeNextBit(), branch-free (see the
+            // multi-set loop below).
             if (state < ANS_L_BASE && bufOffset > bufStart) {
               state = (state << 8) | buf[--bufOffset]
             }
             const rem = state & 0xff
             const xn = (state >>> 8) * p
-            if (rem < p) {
-              state = xn + rem
-              seamCorners[numSeamCorners++] = cc
-            } else {
-              state = state - xn - p
-            }
+            const mask = (rem - p) >> 31
+            const stateIfZero = state - xn - p
+            state = stateIfZero + (mask & (xn + rem - stateIfZero))
+            seamCorners[numSeamCorners] = cc
+            numSeamCorners -= mask
           }
         }
       }
@@ -945,18 +945,20 @@ class MeshEdgebreakerDecoderImpl {
           seamCorners[numSeamCorners++] = ~cc
           continue
         }
-        // Inlined RAnsBitDecoder.decodeNextBit().
+        // Inlined RAnsBitDecoder.decodeNextBit(), branch-free: the bit's
+        // value is unpredictable, so instead of branching on it the corner is
+        // always stored and the list only advances when the bit is set
+        // (mask = -1 exactly when rem < p, i.e. decodeNextBit() === true).
         if (state < ANS_L_BASE && bufOffset > bufStart) {
           state = (state << 8) | buf[--bufOffset]
         }
         const rem = state & 0xff
         const xn = (state >>> 8) * p
-        if (rem < p) {
-          state = xn + rem
-          seamCorners[numSeamCorners++] = cc
-        } else {
-          state = state - xn - p
-        }
+        const mask = (rem - p) >> 31
+        const stateIfZero = state - xn - p
+        state = stateIfZero + (mask & (xn + rem - stateIfZero))
+        seamCorners[numSeamCorners] = cc
+        numSeamCorners -= mask
       }
       ans.state = state
       ans.bufOffset = bufOffset
@@ -1033,6 +1035,12 @@ class MeshEdgebreakerDecoderImpl {
     const ring = scratchInt32(numCorners)
     const ringNext = scratchInt32(numCorners)
     const pointCorner = scratchInt32(numCorners)
+    // Per corner, set when the attribute vertex of ANY table changes between
+    // the corner and its CW predecessor in the ring -- recorded as the ids are
+    // assigned, so the point dedup below reads one byte per corner instead of
+    // comparing every table's id with the previous corner's. Each corner is
+    // in exactly one ring, so the zeroed array is written at most once.
+    const idChange = scratchUint8Zeroed(numCorners)
     let numPoints = 0
 
     for (let v = 0; v < numVertices; ++v) {
@@ -1118,6 +1126,7 @@ class MeshEdgebreakerDecoderImpl {
         }
         // Number the sub-vertices CW from there, splitting at seam edges.
         const first = ring[j]
+        const firstVertId = vertId
         c2v[first] = vertId
         leftMostMap[vertId] = first
         const steps = closed ? end - 1 : end - 1 - j
@@ -1126,9 +1135,13 @@ class MeshEdgebreakerDecoderImpl {
           const rc = ring[j]
           if (isEdgeOnSeam[ringNext[j]] !== 0) {
             leftMostMap[++vertId] = rc
+            idChange[rc] = 1
           }
           c2v[rc] = vertId
         }
+        // Closing the ring: the first corner's CW predecessor holds the last
+        // id, which differs from the first exactly when a split happened.
+        if (vertId !== firstVertId) idChange[first] = 1
         numAttVertices[t] = vertId + 1
       }
 
@@ -1177,28 +1190,20 @@ class MeshEdgebreakerDecoderImpl {
           }
         }
       }
-      let prevC = ring[j]
       let pointId = numPoints++
-      pointCorner[pointId] = prevC
-      faces[prevC] = pointId
+      pointCorner[pointId] = ring[j]
+      faces[ring[j]] = pointId
       const steps = closed ? end - 1 : end - 1 - j
       for (let s = 0; s < steps; ++s) {
         if (++j === end) j = 0
         const rc = ring[j]
-        let attributeSeam = false
-        for (let t = 0; t < numTables; ++t) {
-          const c2v = attCornerToVertex[t]
-          if (c2v[rc] !== c2v[prevC]) {
-            attributeSeam = true
-            break
-          }
-        }
-        if (attributeSeam) {
+        // A new point wherever some table's attribute vertex differs from
+        // the CW predecessor's (see idChange).
+        if (idChange[rc] !== 0) {
           pointId = numPoints++
           pointCorner[pointId] = rc
         }
         faces[rc] = pointId
-        prevC = rc
       }
     }
 

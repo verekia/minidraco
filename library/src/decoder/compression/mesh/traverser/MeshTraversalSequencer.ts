@@ -196,11 +196,27 @@ class MeshTraversalSequencer {
     // pooled buffer's stale contents are never observed.
     this._outPointIds = scratchInt32(this._mesh.numPoints())
 
-    this._traverser!.onTraversalStart()
-    if (!this._traverser!.traverseAll()) {
+    const traverser = this._traverser!
+    traverser.onTraversalStart()
+    if (!traverser.traverseAll()) {
       return false
     }
-    this._traverser!.onTraversalEnd()
+    traverser.onTraversalEnd()
+
+    if (!traverser.emitsPointIds) {
+      // The depth-first traverser records only the corner of each new vertex;
+      // the point id at that corner is faces_[corner]. Gathering them here
+      // gives the same sequence the observer would have appended, one entry
+      // per value in encoding order.
+      const numValues = this._encodingData.numValues
+      const cornerMap = this._encodingData._encodedAttributeValueIndexToCornerMap
+      const faces = this._mesh.faces_
+      const outPointIds = this._outPointIds
+      for (let i = 0; i < numValues; ++i) {
+        outPointIds[i] = faces[cornerMap[i]]
+      }
+      this._numOutPoints = numValues
+    }
 
     if (this._numOutPoints < this._outPointIds.length) {
       this._outPointIds = this._outPointIds.subarray(0, this._numOutPoints)

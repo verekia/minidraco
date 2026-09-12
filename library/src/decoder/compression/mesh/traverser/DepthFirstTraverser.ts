@@ -19,6 +19,7 @@ class DepthFirstTraverser {
   _cornerTraversalStack: Int32Array | number[]
   _numVisitedFaces: number
   _traversalMethodId: number
+  emitsPointIds: boolean
   _cornerToVertex: Int32Array | number[] | null
   _oppositeCorners: Int32Array | number[] | null
   _vertexLeftmost: Int32Array | number[] | null
@@ -34,6 +35,9 @@ class DepthFirstTraverser {
     // Identifies the traversal order for the shared traversal cache
     // (MESH_TRAVERSAL_DEPTH_FIRST). See MeshTraversalSequencer.
     this._traversalMethodId = 0
+    // The sequencer derives the point id sequence from the corner map after
+    // the traversal (see traverseFromCorner).
+    this.emitsPointIds = false
     this._cornerToVertex = null
     this._oppositeCorners = null
     this._vertexLeftmost = null
@@ -109,16 +113,16 @@ class DepthFirstTraverser {
     const stack = this._cornerTraversalStack
     let numVisitedFaces = this._numVisitedFaces
 
-    // Inline observer.onNewVertexVisited/sequencer.addPointId: four flat-array
-    // writes per new vertex, in the hottest decode loop. The counters are
-    // hoisted to locals and written back on every return path below.
-    const sequencer = observer._sequencer
+    // Inline observer.onNewVertexVisited: the two encoding-map writes per new
+    // vertex, in the hottest decode loop; the counter is hoisted to a local and
+    // written back on every return path below. The point id sequence is NOT
+    // produced here: it is a pure function of the corner map (faces_ at each
+    // recorded corner), so the sequencer gathers it afterwards in a plain loop
+    // whose loads overlap, instead of one dependent faces_ read per new vertex
+    // inside this traversal (see emitsPointIds / _generateSequenceInternal).
     const encodingData = observer._encodingData
-    const obsFaces = observer._faces
     const encodedToCornerMap = observer._encodedToCornerMap
     const vertexToEncodedMap = observer._vertexToEncodedMap
-    const outPointIds = sequencer._outPointIds
-    let numOutPoints = sequencer._numOutPoints
     let numValues = encodingData.numValues
 
     let stackSize = 0
@@ -133,12 +137,10 @@ class DepthFirstTraverser {
       return false
     }
     if (vertexToEncodedMap[nextVert] < 0) {
-      outPointIds[numOutPoints++] = obsFaces[nextCorner]
       encodedToCornerMap[numValues] = nextCorner
       vertexToEncodedMap[nextVert] = numValues++
     }
     if (vertexToEncodedMap[prevVert] < 0) {
-      outPointIds[numOutPoints++] = obsFaces[prevCorner]
       encodedToCornerMap[numValues] = prevCorner
       vertexToEncodedMap[prevVert] = numValues++
     }
@@ -164,7 +166,6 @@ class DepthFirstTraverser {
 
         const vertId = cornerToVertex[cornerId]
         if (vertId === kInvalidVertexIndex) {
-          sequencer._numOutPoints = numOutPoints
           encodingData.numValues = numValues
           return false
         }
@@ -180,7 +181,6 @@ class DepthFirstTraverser {
             const nextLc = lc % 3 === 2 ? lc - 2 : lc + 1
             onBoundary = oppositeCorners[nextLc] < 0
           }
-          outPointIds[numOutPoints++] = obsFaces[cornerId]
           encodedToCornerMap[numValues] = cornerId
           vertexToEncodedMap[vertId] = numValues++
           if (!onBoundary) {
@@ -226,7 +226,6 @@ class DepthFirstTraverser {
       }
     }
     this._numVisitedFaces = numVisitedFaces
-    sequencer._numOutPoints = numOutPoints
     encodingData.numValues = numValues
     return true
   }
