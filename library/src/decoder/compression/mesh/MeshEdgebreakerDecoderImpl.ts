@@ -1009,7 +1009,6 @@ class MeshEdgebreakerDecoderImpl {
     const numVertices = ct.numVertices()
     const faces = mesh.faces_
     const vertexLeftmost = ct.vertexLeftmostCornerArray()
-    const swingRight = ct.swingRightArray()
     const baseOpposite = ct.oppositeCornerArray()
     const isVertHole = this._isVertHole as Uint8Array
 
@@ -1048,17 +1047,25 @@ class MeshEdgebreakerDecoderImpl {
       if (c === kInvalidCornerIndex) continue // isolated vertex
 
       // Collect the ring: ring[start] is the leftmost corner c, followed by
-      // its CW (swingRight) successors; `closed` when they wrap back to c.
+      // its CW successors swingRight(x) = previous(opposite(previous(x))),
+      // computed inline (each corner is stepped from exactly once, so a
+      // precomputed swing table would cost more to build than it saves);
+      // `closed` when they wrap back to c.
       let start = 0
       let k = 0
-      ring[k] = c
-      ringNext[k++] = c % 3 === 2 ? c - 2 : c + 1
-      let actC = swingRight[c]
-      while (actC !== kInvalidCornerIndex && actC !== c) {
-        if (k === numCorners) return false // cannot happen on a symmetric opposite table
+      let actC = c
+      for (;;) {
+        const rem = actC % 3
         ring[k] = actC
-        ringNext[k++] = actC % 3 === 2 ? actC - 2 : actC + 1
-        actC = swingRight[actC]
+        ringNext[k++] = rem === 2 ? actC - 2 : actC + 1
+        const o = baseOpposite[rem === 0 ? actC + 2 : actC - 1]
+        if (o < 0) {
+          actC = kInvalidCornerIndex
+          break
+        }
+        actC = o % 3 === 0 ? o + 2 : o - 1
+        if (actC === c) break
+        if (k === numCorners) return false // cannot happen on a symmetric opposite table
       }
       const closed = actC === c
       if (!closed) {
