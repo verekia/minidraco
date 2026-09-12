@@ -47,7 +47,7 @@ Median across an 18-model corpus vs [draco.js](https://github.com/mrdoob/draco.j
 | -------------------------------------------------- | --------------- | --------------- |
 | single-threaded decode — bun (JSC)                 | 🟢 1.37× faster | 🟢 1.46× faster |
 | single-threaded decode — Chrome (V8)               | 🟢 1.35× faster | 🟢 1.19× faster |
-| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.48× faster | ⚪ even         |
+| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.48× faster | 🟢 1.04× faster |
 | `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.33× faster | 🟢 1.17× faster |
 
 Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and level with

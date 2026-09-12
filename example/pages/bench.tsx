@@ -45,8 +45,8 @@ const nextTick = () => new Promise(resolve => setTimeout(resolve, 0))
 // Infinity when a decode rounds to 0.
 const versus = (miniMs: number, otherMs: number) => {
   const ratio = Math.max(otherMs, 0.05) / Math.max(miniMs, 0.05)
-  if (ratio >= 1.05) return `🟢 ${ratio.toFixed(2)}x faster`
-  if (ratio <= 1 / 1.05) return `🔴 ${(1 / ratio).toFixed(2)}x slower`
+  if (ratio >= 1.03) return `🟢 ${ratio.toFixed(2)}x faster`
+  if (ratio <= 1 / 1.03) return `🔴 ${(1 / ratio).toFixed(2)}x slower`
   return '⚪ even'
 }
 

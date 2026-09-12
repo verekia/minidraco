@@ -49,8 +49,8 @@ const repoRoot = resolve(import.meta.dir, '../..')
 // Browser timers are clamped to 0.1 ms, so floor both sides at half of that.
 const versus = (miniMs: number, otherMs: number): string => {
   const ratio = Math.max(otherMs, 0.05) / Math.max(miniMs, 0.05)
-  if (ratio >= 1.05) return `🟢 ${ratio.toFixed(2)}x faster`
-  if (ratio <= 1 / 1.05) return `🔴 ${(1 / ratio).toFixed(2)}x slower`
+  if (ratio >= 1.03) return `🟢 ${ratio.toFixed(2)}x faster`
+  if (ratio <= 1 / 1.03) return `🔴 ${(1 / ratio).toFixed(2)}x slower`
   return '⚪ even'
 }
 
@@ -104,7 +104,7 @@ export const renderBenchMd = (bun: BunResults, browser: BrowserResults | null): 
     'is the production bundle GLBs from `example/public/models` plus the sample models shipped in',
     '[mrdoob/draco.js](https://github.com/mrdoob/draco.js) (`samples/`, used straight from the',
     'installed dependency). The last two columns say how minidraco compares to each other decoder:',
-    '🟢 minidraco is faster, 🔴 minidraco is slower, ⚪ within 5% (run noise).',
+    '🟢 minidraco is faster, 🔴 minidraco is slower, ⚪ within 3% (run noise).',
     '',
     '## Bun — single-threaded (JavaScriptCore)',
     '',

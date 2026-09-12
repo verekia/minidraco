@@ -6,7 +6,7 @@ Median decode time per file (every Draco primitive decoded sequentially per run)
 is the production bundle GLBs from `example/public/models` plus the sample models shipped in
 [mrdoob/draco.js](https://github.com/mrdoob/draco.js) (`samples/`, used straight from the
 installed dependency). The last two columns say how minidraco compares to each other decoder:
-🟢 minidraco is faster, 🔴 minidraco is slower, ⚪ within 5% (run noise).
+🟢 minidraco is faster, 🔴 minidraco is slower, ⚪ within 3% (run noise).
 
 ## Bun — single-threaded (JavaScriptCore)
 
@@ -62,7 +62,7 @@ overhead. Median of 10 runs after 3 warmups, saved from the example's `/bench` p
 | `pool.glb`                        |     2 |  22,280 |   3.60 ms |   5.20 ms |        4.00 ms | 🟢 1.44x faster       | 🟢 1.11x faster   |
 | `rolex.glb`                       |    24 | 120,336 |  34.80 ms |  44.20 ms |       40.00 ms | 🟢 1.27x faster       | 🟢 1.15x faster   |
 | `venice_mask.glb`                 |     5 | 295,600 |  66.70 ms |  92.60 ms |       78.60 ms | 🟢 1.39x faster       | 🟢 1.18x faster   |
-| `bunny.drc`                       |     1 |  69,451 |   4.40 ms |   5.50 ms |        4.20 ms | 🟢 1.25x faster       | ⚪ even           |
+| `bunny.drc`                       |     1 |  69,451 |   4.40 ms |   5.50 ms |        4.20 ms | 🟢 1.25x faster       | 🔴 1.05x slower   |
 | `car.drc`                         |     1 |   1,744 |   0.00 ms |   2.80 ms |        0.20 ms | 🟢 56.00x faster      | 🟢 4.00x faster   |
 | `duck.drc`                        |     1 |   4,212 |   0.90 ms |   1.20 ms |        1.10 ms | 🟢 1.33x faster       | 🟢 1.22x faster   |
 
@@ -81,7 +81,7 @@ first load), GLBs only (raw `.drc` files have no glTF container).
 | file                              | minidraco |  draco.js | draco3d (wasm) | minidraco vs draco.js | minidraco vs wasm |
 | --------------------------------- | --------: | --------: | -------------: | --------------------- | ----------------- |
 | `manablade-bundle.glb`            |  17.80 ms |  41.70 ms |       17.50 ms | 🟢 2.34x faster       | ⚪ even           |
-| `IridescentDishWithOlives.glb`    |  50.40 ms |  57.20 ms |       52.40 ms | 🟢 1.13x faster       | ⚪ even           |
+| `IridescentDishWithOlives.glb`    |  50.40 ms |  57.20 ms |       52.40 ms | 🟢 1.13x faster       | 🟢 1.04x faster   |
 | `LittlestTokyo.glb`               |  63.30 ms | 156.20 ms |       72.00 ms | 🟢 2.47x faster       | 🟢 1.14x faster   |
 | `ShaderBall2.glb`                 |  13.20 ms |  19.50 ms |       13.40 ms | 🟢 1.48x faster       | ⚪ even           |
 | `bath_day.glb`                    |  32.70 ms |  39.00 ms |       32.40 ms | 🟢 1.19x faster       | ⚪ even           |
@@ -91,7 +91,7 @@ first load), GLBs only (raw `.drc` files have no glTF container).
 | `gears.glb`                       |   1.80 ms |   4.10 ms |        1.80 ms | 🟢 2.28x faster       | ⚪ even           |
 | `kira.glb`                        | 191.10 ms | 202.80 ms |      192.30 ms | 🟢 1.06x faster       | ⚪ even           |
 | `minimalistic_modern_bedroom.glb` |  24.00 ms |  27.80 ms |       23.90 ms | 🟢 1.16x faster       | ⚪ even           |
-| `nemetona.glb`                    | 131.20 ms | 182.20 ms |      137.30 ms | 🟢 1.39x faster       | ⚪ even           |
+| `nemetona.glb`                    | 131.20 ms | 182.20 ms |      137.30 ms | 🟢 1.39x faster       | 🟢 1.05x faster   |
 | `pool.glb`                        |  36.10 ms |  39.50 ms |       38.20 ms | 🟢 1.09x faster       | 🟢 1.06x faster   |
 | `rolex.glb`                       |  15.20 ms |  55.40 ms |       19.70 ms | 🟢 3.64x faster       | 🟢 1.30x faster   |
 | `venice_mask.glb`                 |  60.40 ms | 139.60 ms |       56.80 ms | 🟢 2.31x faster       | 🔴 1.06x slower   |
@@ -118,12 +118,12 @@ worker thread also restarts on a slow core on Apple Silicon.
 | `ferrari.glb`                     |  63.40 ms | 116.20 ms |       58.20 ms | 🟢 1.83x faster       | 🔴 1.09x slower   |
 | `forest_house.glb`                |  37.70 ms |  46.50 ms |       50.40 ms | 🟢 1.23x faster       | 🟢 1.34x faster   |
 | `gears.glb`                       |  11.10 ms |  13.60 ms |       24.50 ms | 🟢 1.23x faster       | 🟢 2.21x faster   |
-| `kira.glb`                        | 234.60 ms | 240.00 ms |      244.30 ms | ⚪ even               | ⚪ even           |
+| `kira.glb`                        | 234.60 ms | 240.00 ms |      244.30 ms | ⚪ even               | 🟢 1.04x faster   |
 | `minimalistic_modern_bedroom.glb` |  36.40 ms |  57.90 ms |       53.50 ms | 🟢 1.59x faster       | 🟢 1.47x faster   |
 | `nemetona.glb`                    | 181.00 ms | 213.80 ms |      212.60 ms | 🟢 1.18x faster       | 🟢 1.17x faster   |
 | `pool.glb`                        |  60.00 ms |  68.90 ms |       67.40 ms | 🟢 1.15x faster       | 🟢 1.12x faster   |
 | `rolex.glb`                       |  67.50 ms |  89.80 ms |       57.80 ms | 🟢 1.33x faster       | 🔴 1.17x slower   |
-| `venice_mask.glb`                 | 124.50 ms | 172.90 ms |      119.40 ms | 🟢 1.39x faster       | ⚪ even           |
+| `venice_mask.glb`                 | 124.50 ms | 172.90 ms |      119.40 ms | 🟢 1.39x faster       | 🔴 1.04x slower   |
 
 Medians of independent runs carry roughly ±10% JIT/thermal noise (more for the loader wall
 clock) — treat this as the cross-decoder picture, not a micro-optimization ranking.
