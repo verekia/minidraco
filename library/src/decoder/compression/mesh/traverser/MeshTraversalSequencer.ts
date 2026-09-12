@@ -35,11 +35,15 @@ class MeshTraversalSequencer {
   // The cache entry the last generateSequence resolved to (hit or store);
   // carries the shared indicesMap.
   _cacheEntry: TraversalCacheEntry | null
+  // One representative corner per point id, when the connectivity decoder
+  // recorded them (see MeshEdgebreakerDecoderImpl._assignAttributeVerticesAndPoints).
+  _pointCorner: Int32Array | null
 
   constructor(
     mesh: Mesh,
     encodingData: MeshAttributeIndicesEncodingData,
     traversalCache: TraversalCache | null = null,
+    pointCorner: Int32Array | null = null,
   ) {
     this._mesh = mesh
     this._encodingData = encodingData
@@ -50,6 +54,7 @@ class MeshTraversalSequencer {
     // attribute decoders of one mesh (see MeshEdgebreakerDecoderImpl).
     this._traversalCache = traversalCache
     this._cacheEntry = null
+    this._pointCorner = pointCorner
   }
 
   setTraverser(traverser: DepthFirstTraverser | MaxPredictionDegreeTraverser): void {
@@ -133,28 +138,49 @@ class MeshTraversalSequencer {
     const numFaces = this._mesh.numFaces()
     const numPoints = this._mesh.numPoints()
     // Every point id appears in faces_ (points are created per-corner during
-    // _assignPointsToCorners), so the loop below writes every map entry.
+    // the connectivity decoder's point assignment), so the loops below write
+    // every map entry.
     attribute.setExplicitMappingUnfilled(numPoints)
-    // Iterate corners directly over the flat connectivity arrays: the corner
-    // table is one of two classes, so vertex()/cornerToPointId()/setPointMapEntry()
-    // would all be polymorphic per corner. faces_[ci] is the corner's point id
-    // and cornerToVertex[ci] its vertex; write straight into the indices map.
-    const numCorners = numFaces * 3
-    const faces = this._mesh.faces_
     const cornerToVertex = cornerTable.cornerToVertexArray()
     const vertexToAttEntry = this._encodingData.vertexToEncodedAttributeValueIndexMap
     const indicesMap = attribute.indicesMap
-    for (let ci = 0; ci < numCorners; ++ci) {
-      const vertId = cornerToVertex[ci]
-      if (vertId < 0) {
-        return false
+    const pointCorner = this._pointCorner
+    if (pointCorner !== null) {
+      // All corners of a point share its attribute vertex (that is what makes
+      // them one point), so one representative corner per point gives the
+      // same map as visiting every corner -- in a loop over the points
+      // (typically a third to a half as many as there are corners), with
+      // sequential writes.
+      for (let p = 0; p < numPoints; ++p) {
+        const vertId = cornerToVertex[pointCorner[p]]
+        if (vertId < 0) {
+          return false
+        }
+        const attEntryId = vertexToAttEntry[vertId]
+        if (attEntryId >= numPoints) {
+          return false
+        }
+        indicesMap[p] = attEntryId
       }
-      const attEntryId = vertexToAttEntry[vertId]
-      const pointId = faces[ci]
-      if (pointId >= numPoints || attEntryId >= numPoints) {
-        return false
+    } else {
+      // Iterate corners directly over the flat connectivity arrays: the corner
+      // table is one of two classes, so vertex()/cornerToPointId()/setPointMapEntry()
+      // would all be polymorphic per corner. faces_[ci] is the corner's point id
+      // and cornerToVertex[ci] its vertex; write straight into the indices map.
+      const numCorners = numFaces * 3
+      const faces = this._mesh.faces_
+      for (let ci = 0; ci < numCorners; ++ci) {
+        const vertId = cornerToVertex[ci]
+        if (vertId < 0) {
+          return false
+        }
+        const attEntryId = vertexToAttEntry[vertId]
+        const pointId = faces[ci]
+        if (pointId >= numPoints || attEntryId >= numPoints) {
+          return false
+        }
+        indicesMap[pointId] = attEntryId
       }
-      indicesMap[pointId] = attEntryId
     }
     if (entry !== null) {
       entry.indicesMap = attribute.indicesMap as Uint32Array
@@ -171,11 +197,8 @@ class MeshTraversalSequencer {
     this._outPointIds = scratchInt32(this._mesh.numPoints())
 
     this._traverser!.onTraversalStart()
-    const numFaces = this._traverser!.cornerTable()!.numFaces()
-    for (let i = 0; i < numFaces && this._traverser!._numVisitedFaces < numFaces; ++i) {
-      if (!this._traverser!.traverseFromCorner(3 * i)) {
-        return false
-      }
+    if (!this._traverser!.traverseAll()) {
+      return false
     }
     this._traverser!.onTraversalEnd()
 

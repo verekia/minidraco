@@ -1,7 +1,7 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerDecoderImpl.js (MIT)
 
 import { DecoderBuffer } from '../../core/DecoderBuffer'
-import { scratchInt32, scratchInt32Filled, scratchUint8Filled, scratchUint8Zeroed } from '../../core/ScratchArena'
+import { scratchInt32, scratchInt32Filled, scratchUint8Filled } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { MeshAttributeElementType } from '../../mesh/Mesh'
 import { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTable'
@@ -50,6 +50,9 @@ class MeshEdgebreakerDecoderImpl {
   _vertexTraversalCache: TraversalCache
   _attributeData: AttributeData[]
   _traversalDecoder: MeshEdgebreakerTraversalDecoder
+  // One corner per point id (decode-scoped scratch), filled by
+  // _assignAttributeVerticesAndPoints; null when points are the base vertices.
+  _pointCorner: Int32Array | null
 
   constructor(TraversalDecoderClass: new () => MeshEdgebreakerTraversalDecoder) {
     this._decoder = null
@@ -67,6 +70,7 @@ class MeshEdgebreakerDecoderImpl {
     this._vertexTraversalCache = new Map()
     this._attributeData = []
     this._traversalDecoder = new TraversalDecoderClass()
+    this._pointCorner = null
   }
 
   init(decoder: MeshEdgebreakerDecoder): boolean {
@@ -187,7 +191,12 @@ class MeshEdgebreakerDecoderImpl {
     mesh: Mesh,
     traversalMethod: number,
   ): MeshTraversalSequencer {
-    const traversalSequencer = new MeshTraversalSequencer(mesh, encodingData, this._vertexTraversalCache)
+    const traversalSequencer = new MeshTraversalSequencer(
+      mesh,
+      encodingData,
+      this._vertexTraversalCache,
+      this._pointCorner,
+    )
 
     const observer = new MeshAttributeIndicesEncodingObserver(cornerTable, mesh, traversalSequencer, encodingData)
 
@@ -305,6 +314,13 @@ class MeshEdgebreakerDecoderImpl {
     // per-corner seam flags lets a matching set skip building its flags and
     // vertex maps entirely, rather than building them and then discovering they
     // were redundant.
+    //
+    // The distinct sets' attribute-vertex maps are then built together with the
+    // point assignment in one fused pass over the vertex rings (see
+    // _assignAttributeVerticesAndPoints); a set that matches its predecessor
+    // adopts that predecessor's finished maps afterwards.
+    const distinctTables: MeshAttributeCornerTable[] = []
+    const adoptions: MeshAttributeCornerTable[] = []
     let previousConnectivityData: MeshAttributeCornerTable | null = null
     let previousSeamCorners: Int32Array | null = null
     let previousSeamCount = 0
@@ -326,20 +342,29 @@ class MeshEdgebreakerDecoderImpl {
       }
 
       if (sameAsPrevious) {
-        connectivityData.adoptFrom(previousConnectivityData!)
+        adoptions.push(connectivityData, previousConnectivityData!)
       } else {
         connectivityData.initEmpty(this._cornerTable)
         connectivityData.reserveSeamEdges(seamCount)
         for (let s = 0; s < seamCount; ++s) {
           connectivityData.addSeamEdge(seamCorners[s])
         }
-        if (!connectivityData.recomputeVertices(null, null)) {
-          return false
-        }
+        distinctTables.push(connectivityData)
       }
       previousConnectivityData = connectivityData
       previousSeamCorners = seamCorners
       previousSeamCount = seamCount
+    }
+
+    if (this._attributeData.length === 0) {
+      this._assignPointsToVertices(numConnectivityVerts)
+    } else if (!this._assignAttributeVerticesAndPoints(distinctTables)) {
+      return false
+    }
+    // Adoption chains run forward (a set only ever matches its predecessor),
+    // so each adopter's source is finished by the time it is reached.
+    for (let i = 0; i < adoptions.length; i += 2) {
+      adoptions[i].adoptFrom(adoptions[i + 1])
     }
 
     this._posEncodingData.init(this._cornerTable.numVertices())
@@ -349,9 +374,6 @@ class MeshEdgebreakerDecoderImpl {
         attConnectivityVerts = this._cornerTable.numVertices()
       }
       this._attributeData[i].encodingData.init(attConnectivityVerts)
-    }
-    if (!this._assignPointsToCorners(numConnectivityVerts)) {
-      return false
     }
     return true
   }
@@ -887,179 +909,303 @@ class MeshEdgebreakerDecoderImpl {
       return
     }
 
+    // Several attribute data sets: list the corners that carry a decision
+    // once (boundary corners, always seams, stored bit-inverted; interior
+    // edges at their lower-face corner), then run each set's rANS bit stream
+    // over that list with the decoder state in locals -- the same per-corner
+    // decisions in the same order, without a real decodeNextBit() call per
+    // set per corner. Decode-scoped scratch, written before it is read.
+    const candidates = scratchInt32(numCorners)
+    let numCandidates = 0
     for (let corner = 0; corner < numCorners; corner += 3) {
       for (let k = 0; k < 3; ++k) {
         const cc = corner + k
         const oppCorner = oppositeCorners[cc]
         if (oppCorner === kInvalidCornerIndex) {
-          for (let i = 0; i < numAttrData; ++i) {
-            const ad = attributeData[i]
-            ad.attributeSeamCorners[ad.numSeamCorners++] = cc
-          }
+          candidates[numCandidates++] = ~cc
         } else if (oppCorner >= corner) {
-          for (let i = 0; i < numAttrData; ++i) {
-            if (connectivityDecoders[i].decodeNextBit()) {
-              const ad = attributeData[i]
-              ad.attributeSeamCorners[ad.numSeamCorners++] = cc
-            }
-          }
+          candidates[numCandidates++] = cc
         }
       }
+    }
+    for (let i = 0; i < numAttrData; ++i) {
+      const ad = attributeData[i]
+      const seamCorners = ad.attributeSeamCorners
+      let numSeamCorners = ad.numSeamCorners
+      const decoder = connectivityDecoders[i]
+      const ans = decoder.ansDecoder_
+      const p = decoder.p_
+      const buf = ans.buf!
+      const bufStart = ans.bufStart
+      let state = ans.state
+      let bufOffset = ans.bufOffset
+      for (let n = 0; n < numCandidates; ++n) {
+        const cc = candidates[n]
+        if (cc < 0) {
+          seamCorners[numSeamCorners++] = ~cc
+          continue
+        }
+        // Inlined RAnsBitDecoder.decodeNextBit().
+        if (state < ANS_L_BASE && bufOffset > bufStart) {
+          state = (state << 8) | buf[--bufOffset]
+        }
+        const rem = state & 0xff
+        const xn = (state >>> 8) * p
+        if (rem < p) {
+          state = xn + rem
+          seamCorners[numSeamCorners++] = cc
+        } else {
+          state = state - xn - p
+        }
+      }
+      ans.state = state
+      ans.bufOffset = bufOffset
+      ad.numSeamCorners = numSeamCorners
     }
   }
 
-  _assignPointsToCorners(numConnectivityVerts: number): boolean {
-    this._decoder!.mesh()!.setNumFaces(this._cornerTable!.numFaces())
-
+  // Position-only connectivity: vertex indices equal point indices.
+  _assignPointsToVertices(numConnectivityVerts: number): void {
     const mesh = this._decoder!.mesh()!
     const ct = this._cornerTable!
-
-    if (this._attributeData.length === 0) {
-      // Position-only connectivity: vertex indices equal point indices.
-      const numFaces = mesh.numFaces()
-      const faces = mesh.faces_
-      const baseCornerToVertex = ct.cornerToVertexArray()
-      for (let f = 0; f < numFaces; ++f) {
-        const startCorner = 3 * f
-        faces[startCorner] = baseCornerToVertex[startCorner]
-        faces[startCorner + 1] = baseCornerToVertex[startCorner + 1]
-        faces[startCorner + 2] = baseCornerToVertex[startCorner + 2]
-      }
-      this._decoder!.pointCloud()!.setNumPoints(numConnectivityVerts)
-      return true
+    mesh.setNumFaces(ct.numFaces())
+    const numCorners = ct.numCorners()
+    const faces = mesh.faces_
+    const baseCornerToVertex = ct.cornerToVertexArray()
+    for (let c = 0; c < numCorners; ++c) {
+      faces[c] = baseCornerToVertex[c]
     }
+    this._pointCorner = null
+    this._decoder!.pointCloud()!.setNumPoints(numConnectivityVerts)
+  }
 
-    // Multiple attributes: deduplicate. pointToCornerMap is only used for its
-    // length (the running point id), so track it as a counter, not an array.
-    const attributeData = this._attributeData
-    const numAttrData = attributeData.length
-    let numPoints = 0
-    // Decode-scoped: fully consumed by the faces_ fill at the end of this method.
-    const cornerToPointMap = scratchInt32(ct.numCorners())
-
+  // One walk around every vertex ring that (a) numbers the attribute vertices
+  // of every distinct attribute corner table (C++ MeshAttributeCornerTable::
+  // RecomputeVertices, one per table) and (b) assigns the mesh's point ids
+  // (C++ AssignPointsToCorners). Each of those is a per-vertex procedure that
+  // only reads the ring's own corners and its table's running counter, so
+  // running them side by side on one buffered ring produces exactly the ids
+  // the separate passes would -- while the ring's corner chain (a serial,
+  // cache-missing pointer chase through swingRight) is followed once instead
+  // of once per table plus once for the points. Also records one corner per
+  // point (_pointCorner) so point-to-value maps can be built per point rather
+  // than per corner (see MeshTraversalSequencer).
+  //
+  // The buffered ring makes the swing-left prefix of the seam-vertex recompute
+  // an index walk: swingLeft(ring[j]) is ring[j - 1] (the opposite table is
+  // symmetric), and for a closed ring ring[k - 1] when j is 0. An open ring
+  // whose leftmost corner still has a left neighbor (never the case for the
+  // corner table the edgebreaker decoder builds, which keeps the left-most
+  // corner of every boundary vertex, but allowed for by the C++ code) is
+  // extended leftwards first, so the walk covers exactly the corners the
+  // separate passes would have reached.
+  _assignAttributeVerticesAndPoints(tables: MeshAttributeCornerTable[]): boolean {
+    const mesh = this._decoder!.mesh()!
+    const ct = this._cornerTable!
+    mesh.setNumFaces(ct.numFaces())
+    const numCorners = ct.numCorners()
     const numVertices = ct.numVertices()
-    // Flat connectivity for the ring walk and per-attribute lookups — avoids
-    // dispatch on the polymorphic corner tables for every corner of every ring.
+    const faces = mesh.faces_
     const vertexLeftmost = ct.vertexLeftmostCornerArray()
     const swingRight = ct.swingRightArray()
-    const _baseCornerToVertex = ct.cornerToVertexArray()
-    const isVertHole = this._isVertHole
-    const attCornerToVertex = new Array<Int32Array | number[]>(numAttrData)
-    const attVertexOnSeam = new Array<Uint8Array | number[]>(numAttrData)
-    for (let i = 0; i < numAttrData; ++i) {
-      attCornerToVertex[i] = attributeData[i].connectivityData.cornerToVertexArray()
-      attVertexOnSeam[i] = attributeData[i].connectivityData.vertexOnSeamArray()
-    }
-    const singleAttC2V = numAttrData === 1 ? attCornerToVertex[0] : null
+    const baseOpposite = ct.oppositeCornerArray()
+    const isVertHole = this._isVertHole as Uint8Array
 
-    // Unified per-vertex anyAttVertexOnSeam flag.
-    let anyAttVertexOnSeam: Uint8Array | number[]
-    if (numAttrData === 1) {
-      anyAttVertexOnSeam = attVertexOnSeam[0]
-    } else {
-      anyAttVertexOnSeam = scratchUint8Zeroed(numVertices)
-      for (let i = 0; i < numAttrData; ++i) {
-        const attSeam = attVertexOnSeam[i]
-        for (let v = 0; v < numVertices; ++v) {
-          if (attSeam[v]) {
-            anyAttVertexOnSeam[v] = 1
-          }
-        }
-      }
+    const numTables = tables.length
+    const attCornerToVertex = new Array<Int32Array>(numTables)
+    const edgeOnSeam = new Array<Uint8Array>(numTables)
+    const vertexOnSeam = new Array<Uint8Array>(numTables)
+    const leftMostMaps = new Array<Int32Array>(numTables)
+    // Per-table attribute-vertex counters.
+    const numAttVertices = new Int32Array(numTables)
+    for (let t = 0; t < numTables; ++t) {
+      attCornerToVertex[t] = tables[t].corner_to_vertex_map_ as Int32Array
+      edgeOnSeam[t] = tables[t].is_edge_on_seam_ as Uint8Array
+      vertexOnSeam[t] = tables[t].is_vertex_on_seam_ as Uint8Array
+      // New-vertex count never exceeds the corner count.
+      leftMostMaps[t] = scratchInt32(numCorners)
     }
+    // Decode-scoped scratch: the ring buffer (each corner alongside its next
+    // corner, whose opposite edge is the one crossed when swinging left onto
+    // it -- computed once here instead of once per table), and one corner per
+    // point (a point's corners all share every attribute vertex, so any one
+    // stands for it). All written before they are read.
+    const ring = scratchInt32(numCorners)
+    const ringNext = scratchInt32(numCorners)
+    const pointCorner = scratchInt32(numCorners)
+    let numPoints = 0
 
     for (let v = 0; v < numVertices; ++v) {
-      let c = vertexLeftmost[v]
+      const c = vertexLeftmost[v]
       if (c === kInvalidCornerIndex) continue // isolated vertex
 
-      const isSeamVertex = isVertHole[v] || anyAttVertexOnSeam[v]
+      // Collect the ring: ring[start] is the leftmost corner c, followed by
+      // its CW (swingRight) successors; `closed` when they wrap back to c.
+      let start = 0
+      let k = 0
+      ring[k] = c
+      ringNext[k++] = c % 3 === 2 ? c - 2 : c + 1
+      let actC = swingRight[c]
+      while (actC !== kInvalidCornerIndex && actC !== c) {
+        if (k === numCorners) return false // cannot happen on a symmetric opposite table
+        ring[k] = actC
+        ringNext[k++] = actC % 3 === 2 ? actC - 2 : actC + 1
+        actC = swingRight[actC]
+      }
+      const closed = actC === c
+      if (!closed) {
+        // swingLeft(c) = next(opposite(next(c))); an open ring is expected to
+        // begin at a boundary. When it does not, prepend the CCW side so the
+        // seam-vertex walk below can still reach it.
+        const o = baseOpposite[ringNext[0]]
+        let left = o < 0 ? kInvalidCornerIndex : o % 3 === 2 ? o - 2 : o + 1
+        if (left !== kInvalidCornerIndex) {
+          // Count the CCW corners, shift the CW part up to make room, then
+          // write the CCW corners in front so that ring[0] is the far left
+          // end. Cold path; the second walk keeps it allocation-free.
+          let m = 0
+          let cur = left
+          while (cur !== kInvalidCornerIndex && cur !== c) {
+            if (k + ++m > numCorners) return false
+            const ln = cur % 3 === 2 ? cur - 2 : cur + 1
+            const lo = baseOpposite[ln]
+            cur = lo < 0 ? kInvalidCornerIndex : lo % 3 === 2 ? lo - 2 : lo + 1
+          }
+          for (let j = k - 1; j >= 0; --j) {
+            ring[j + m] = ring[j]
+            ringNext[j + m] = ringNext[j]
+          }
+          cur = left
+          for (let i = 1; i <= m; ++i) {
+            const ln = cur % 3 === 2 ? cur - 2 : cur + 1
+            ring[m - i] = cur
+            ringNext[m - i] = ln
+            const lo = baseOpposite[ln]
+            cur = lo < 0 ? kInvalidCornerIndex : lo % 3 === 2 ? lo - 2 : lo + 1
+          }
+          start = m
+          k += m
+        }
+      }
+      const end = k // one past the last ring index
 
-      if (!isSeamVertex) {
-        // Fast path: every corner in this ring gets the same point id.
-        const initialC = c
+      // (a) Attribute vertices, per distinct table.
+      for (let t = 0; t < numTables; ++t) {
+        const c2v = attCornerToVertex[t]
+        const leftMostMap = leftMostMaps[t]
+        let vertId = numAttVertices[t]
+        if (vertexOnSeam[t][v] === 0) {
+          // Whole ring (from c CW) is one attribute vertex.
+          leftMostMap[vertId] = c
+          for (let j = start; j < end; ++j) c2v[ring[j]] = vertId
+          numAttVertices[t] = vertId + 1
+          continue
+        }
+        const isEdgeOnSeam = edgeOnSeam[t]
+        // Swing left from c until a seam (or the boundary) blocks the way.
+        let j = start
+        for (;;) {
+          const rn = ringNext[j]
+          if (isEdgeOnSeam[rn] !== 0 || baseOpposite[rn] < 0) break
+          if (j > 0) {
+            --j
+          } else if (closed) {
+            j = end - 1
+          } else {
+            break // far left end of an open ring
+          }
+          if (j === start) return false // full circle without a seam
+        }
+        // Number the sub-vertices CW from there, splitting at seam edges.
+        const first = ring[j]
+        c2v[first] = vertId
+        leftMostMap[vertId] = first
+        const steps = closed ? end - 1 : end - 1 - j
+        for (let s = 0; s < steps; ++s) {
+          if (++j === end) j = 0
+          const rc = ring[j]
+          if (isEdgeOnSeam[ringNext[j]] !== 0) {
+            leftMostMap[++vertId] = rc
+          }
+          c2v[rc] = vertId
+        }
+        numAttVertices[t] = vertId + 1
+      }
+
+      // (b) Point ids.
+      const hole = isVertHole[v] !== 0
+      let anySeam = false
+      for (let t = 0; t < numTables; ++t) {
+        if (vertexOnSeam[t][v] !== 0) {
+          anySeam = true
+          break
+        }
+      }
+      if (!hole && !anySeam) {
+        // Every corner in this ring gets the same point id.
         const pointId = numPoints++
-        cornerToPointMap[initialC] = pointId
-        c = swingRight[initialC]
-        while (c !== kInvalidCornerIndex && c !== initialC) {
-          cornerToPointMap[c] = pointId
-          c = swingRight[c]
-        }
-      } else {
-        let deduplicationFirstCorner = c
-        if (!isVertHole[v]) {
-          // Find the first seam (of any attribute).
-          if (numAttrData === 1) {
-            const vertId = singleAttC2V![c]
-            let actC = swingRight[c]
-            while (actC !== c) {
-              if (actC === kInvalidCornerIndex) return false
-              if (singleAttC2V![actC] !== vertId) {
-                deduplicationFirstCorner = actC
-                break
-              }
-              actC = swingRight[actC]
+        pointCorner[pointId] = c
+        for (let j = start; j < end; ++j) faces[ring[j]] = pointId
+        continue
+      }
+      // Interior seam vertex: start the deduplication at the first attribute
+      // vertex change CW from c, taking the seamed tables in order until one
+      // shows a change (a table whose only seam edge at this vertex is the
+      // one its numbering started after shows none).
+      let j = start
+      if (!hole) {
+        for (let t = 0; t < numTables; ++t) {
+          if (vertexOnSeam[t][v] === 0) continue
+          const c2v = attCornerToVertex[t]
+          const vertId = c2v[c]
+          let jj = start
+          let found = false
+          for (;;) {
+            if (++jj === end) {
+              if (!closed) return false
+              jj = 0
             }
-          } else {
-            for (let i = 0; i < numAttrData; ++i) {
-              if (!attVertexOnSeam[i][v]) {
-                continue
-              }
-              const attC2V = attCornerToVertex[i]
-              const vertId = attC2V[c]
-              let actC = swingRight[c]
-              let seamFound = false
-              while (actC !== c) {
-                if (actC === kInvalidCornerIndex) return false
-                if (attC2V[actC] !== vertId) {
-                  deduplicationFirstCorner = actC
-                  seamFound = true
-                  break
-                }
-                actC = swingRight[actC]
-              }
-              if (seamFound) break
+            if (jj === start) break
+            if (c2v[ring[jj]] !== vertId) {
+              found = true
+              break
             }
           }
-        }
-
-        // Deduplication pass over corners on the processed vertex, CW.
-        c = deduplicationFirstCorner
-        cornerToPointMap[c] = numPoints++
-        let prevC = c
-        c = swingRight[c]
-        while (c !== kInvalidCornerIndex && c !== deduplicationFirstCorner) {
-          let attributeSeam: boolean
-          if (numAttrData === 1) {
-            attributeSeam = singleAttC2V![c] !== singleAttC2V![prevC]
-          } else {
-            attributeSeam = false
-            for (let i = 0; i < numAttrData; ++i) {
-              const attC2V = attCornerToVertex[i]
-              if (attC2V[c] !== attC2V[prevC]) {
-                attributeSeam = true
-                break
-              }
-            }
+          if (found) {
+            j = jj
+            break
           }
-          if (attributeSeam) {
-            cornerToPointMap[c] = numPoints++
-          } else {
-            cornerToPointMap[c] = cornerToPointMap[prevC]
-          }
-          prevC = c
-          c = swingRight[c]
         }
+      }
+      let prevC = ring[j]
+      let pointId = numPoints++
+      pointCorner[pointId] = prevC
+      faces[prevC] = pointId
+      const steps = closed ? end - 1 : end - 1 - j
+      for (let s = 0; s < steps; ++s) {
+        if (++j === end) j = 0
+        const rc = ring[j]
+        let attributeSeam = false
+        for (let t = 0; t < numTables; ++t) {
+          const c2v = attCornerToVertex[t]
+          if (c2v[rc] !== c2v[prevC]) {
+            attributeSeam = true
+            break
+          }
+        }
+        if (attributeSeam) {
+          pointId = numPoints++
+          pointCorner[pointId] = rc
+        }
+        faces[rc] = pointId
+        prevC = rc
       }
     }
 
-    const numFaces = mesh.numFaces()
-    const faces = mesh.faces_
-    for (let f = 0; f < numFaces; ++f) {
-      const o = 3 * f
-      faces[o] = cornerToPointMap[o]
-      faces[o + 1] = cornerToPointMap[o + 1]
-      faces[o + 2] = cornerToPointMap[o + 2]
+    for (let t = 0; t < numTables; ++t) {
+      tables[t].setRecomputedVertices(leftMostMaps[t], numAttVertices[t])
     }
+    this._pointCorner = pointCorner
     this._decoder!.pointCloud()!.setNumPoints(numPoints)
     return true
   }

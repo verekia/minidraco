@@ -80,6 +80,22 @@ class DepthFirstTraverser {
 
   onTraversalEnd(): void {}
 
+  // Traverses every face, seeding a new traversal at the first corner of each
+  // face not yet reached. The visited check lives here rather than behind a
+  // traverseFromCorner call per face: on a connected mesh nearly every face is
+  // already visited by the time its seed comes up, and that call-and-return
+  // was measurable next to the traversal itself.
+  traverseAll(): boolean {
+    const numFaces = this._cornerTable!.numFaces()
+    const isFaceVisited = this._isFaceVisited!
+    for (let f = 0; f < numFaces && this._numVisitedFaces < numFaces; ++f) {
+      if (isFaceVisited[f] === 0 && !this.traverseFromCorner(3 * f)) {
+        return false
+      }
+    }
+    return true
+  }
+
   traverseFromCorner(cornerId: number): boolean {
     if (this._isFaceVisited![(cornerId / 3) | 0]) {
       return true // Already traversed.

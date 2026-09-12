@@ -80,6 +80,19 @@ class MaxPredictionDegreeTraverser {
 
   onTraversalEnd(): void {}
 
+  // Same contract as DepthFirstTraverser.traverseAll. Seeds every face
+  // through traverseFromCorner (which re-checks the first face's vertices),
+  // exactly as the sequencer's loop always has.
+  traverseAll(): boolean {
+    const numFaces = this._cornerTable!.numFaces()
+    for (let f = 0; f < numFaces && this._numVisitedFaces < numFaces; ++f) {
+      if (!this.traverseFromCorner(3 * f)) {
+        return false
+      }
+    }
+    return true
+  }
+
   // Returns the priority of traversing the edge leading to cornerId. Mutates
   // the prediction degree of the destination vertex.
   _computePriority(cornerId: number): number {
