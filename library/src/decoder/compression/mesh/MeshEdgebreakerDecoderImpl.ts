@@ -864,69 +864,28 @@ class MeshEdgebreakerDecoderImpl {
     const connectivityDecoders = this._traversalDecoder._attributeConnectivityDecoders!
     const numCorners = this._cornerTable!.numCorners()
 
-    // Overwhelmingly common case (one attribute data set): run a specialized
-    // loop with the seam list, its counter and the whole rANS bit-decoder state
-    // in locals. The generic loop below pays a property load per corner for
-    // each of those, and a real call per decoded bit.
-    if (numAttrData === 1) {
-      const ad = attributeData[0]
-      const seamCorners = ad.attributeSeamCorners
-      let numSeamCorners = ad.numSeamCorners
-      const decoder = connectivityDecoders[0]
-      const ans = decoder.ansDecoder_
-      const p = decoder.p_
-      const buf = ans.buf!
-      const bufStart = ans.bufStart
-      let state = ans.state
-      let bufOffset = ans.bufOffset
-
-      for (let corner = 0; corner < numCorners; corner += 3) {
-        for (let k = 0; k < 3; ++k) {
-          const cc = corner + k
-          const oppCorner = oppositeCorners[cc]
-          if (oppCorner === kInvalidCornerIndex) {
-            seamCorners[numSeamCorners++] = cc
-          } else if (oppCorner >= corner) {
-            // Inlined RAnsBitDecoder.decodeNextBit(), branch-free (see the
-            // multi-set loop below).
-            if (state < ANS_L_BASE && bufOffset > bufStart) {
-              state = (state << 8) | buf[--bufOffset]
-            }
-            const rem = state & 0xff
-            const xn = (state >>> 8) * p
-            const mask = (rem - p) >> 31
-            const stateIfZero = state - xn - p
-            state = stateIfZero + (mask & (xn + rem - stateIfZero))
-            seamCorners[numSeamCorners] = cc
-            numSeamCorners -= mask
-          }
-        }
-      }
-
-      ans.state = state
-      ans.bufOffset = bufOffset
-      ad.numSeamCorners = numSeamCorners
-      return
-    }
-
-    // Several attribute data sets: list the corners that carry a decision
-    // once (boundary corners, always seams, stored bit-inverted; interior
-    // edges at their lower-face corner), then run each set's rANS bit stream
-    // over that list with the decoder state in locals -- the same per-corner
-    // decisions in the same order, without a real decodeNextBit() call per
-    // set per corner. Decode-scoped scratch, written before it is read.
+    // Two passes: list the corners that carry a decision once (boundary
+    // corners, always seams, stored bit-inverted; interior edges at their
+    // lower-face corner), then run each set's rANS bit stream over that list
+    // with the decoder state in locals -- the same per-corner decisions in the
+    // same order, without a real decodeNextBit() call per set per corner and
+    // without a data-dependent branch per corner on the edge kind: the
+    // candidate is always stored and the list only advances for boundary
+    // corners (opposite < 0) and lower-face interior corners (opposite >=
+    // face base, i.e. faceBase - opposite - 1 < 0). Decode-scoped scratch,
+    // written before it is read.
     const candidates = scratchInt32(numCorners)
     let numCandidates = 0
     for (let corner = 0; corner < numCorners; corner += 3) {
-      for (let k = 0; k < 3; ++k) {
-        const cc = corner + k
-        const oppCorner = oppositeCorners[cc]
-        if (oppCorner === kInvalidCornerIndex) {
-          candidates[numCandidates++] = ~cc
-        } else if (oppCorner >= corner) {
-          candidates[numCandidates++] = cc
-        }
-      }
+      let opp = oppositeCorners[corner]
+      candidates[numCandidates] = corner ^ (opp >> 31)
+      numCandidates -= (opp | (corner - opp - 1)) >> 31
+      opp = oppositeCorners[corner + 1]
+      candidates[numCandidates] = (corner + 1) ^ (opp >> 31)
+      numCandidates -= (opp | (corner - opp - 1)) >> 31
+      opp = oppositeCorners[corner + 2]
+      candidates[numCandidates] = (corner + 2) ^ (opp >> 31)
+      numCandidates -= (opp | (corner - opp - 1)) >> 31
     }
     for (let i = 0; i < numAttrData; ++i) {
       const ad = attributeData[i]

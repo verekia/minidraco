@@ -28,6 +28,8 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
   _pendingSymbolDecoder: RAnsSymbolDecoder | null
   _pendingNumValues: number
   _finishPointIds: Int32Array | null
+  // Int32 view over the portable attribute's storage (see preparePortableAttribute).
+  _portableData: Int32Array | null
 
   constructor() {
     super()
@@ -35,6 +37,7 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     this._pendingSymbolDecoder = null
     this._pendingNumValues = 0
     this._finishPointIds = null
+    this._portableData = null
   }
 
   // --- Two-phase decode (parse headers / batch symbol decode / finish) ---
@@ -309,8 +312,9 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     // TypedArray.set coerces per element to the target type -- same result as the
     // per-entry byte copy, without per-value buffer.write() dispatch. dstAddr has
     // byteOffset 0, so the typed view is aligned.
-    const dstAddr = this.attribute!.getAddress(0)
-    const dst = new TypedArrayClass(dstAddr.buffer, dstAddr.byteOffset, total)
+    const attribute = this.attribute!
+    const dstData = attribute.buffer!.data
+    const dst = new TypedArrayClass(dstData.buffer, dstData.byteOffset + attribute.byteOffset, total)
     dst.set(src)
   }
 
@@ -333,18 +337,18 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     portAtt.resetScratch(numEntries)
     portAtt.uniqueId = this.attribute!.uniqueId
     this.setPortableAttribute(portAtt)
+    // One Int32 view over the portable storage for the whole decode (the
+    // storage is fixed here); the per-call subarray + view pair it replaces
+    // was allocated several times per attribute.
+    const data = portAtt.buffer!.data
+    this._portableData =
+      numEntries === 0
+        ? null
+        : new Int32Array(data.buffer, data.byteOffset + portAtt.byteOffset, numEntries * numComponents)
   }
 
   getPortableAttributeData(): Int32Array | null {
-    if (this.portableAttribute!.size === 0) {
-      return null
-    }
-    const addr = this.portableAttribute!.getAddress(0)
-    return new Int32Array(
-      addr.buffer,
-      addr.byteOffset,
-      this.portableAttribute!.size * this.portableAttribute!.numComponents,
-    )
+    return this._portableData
   }
 }
 

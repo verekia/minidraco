@@ -74,10 +74,10 @@ class AttributeQuantizationTransform extends AttributeTransform {
     // holds float32. Attribute buffers start at byteOffset 0, so typed-array
     // views are aligned -- read/write through them directly to avoid a
     // per-component DataView dispatch and a per-entry buffer copy.
-    const srcAddr = attribute.getAddress(0)
-    const srcI32 = new Int32Array(srcAddr.buffer, srcAddr.byteOffset, total)
-    const dstAddr = targetAttribute.getAddress(0)
-    const dstF32 = new Float32Array(dstAddr.buffer, dstAddr.byteOffset, total)
+    const srcData = attribute.buffer!.data
+    const srcI32 = new Int32Array(srcData.buffer, srcData.byteOffset + attribute.byteOffset, total)
+    const dstData = targetAttribute.buffer!.data
+    const dstF32 = new Float32Array(dstData.buffer, dstData.byteOffset + targetAttribute.byteOffset, total)
 
     // Mirror Draco C++ float32 arithmetic so the result is bit-identical to the
     // WASM decoder: `value` (int) is converted to float, multiplied by the
