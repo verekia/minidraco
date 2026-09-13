@@ -15,8 +15,7 @@ gltfLoader.setDRACOLoader(new MinidracoLoader())
 gltfLoader.load('model.glb', gltf => scene.add(gltf.scene))
 ```
 
-A drop-in for `THREE.DRACOLoader`, no cast needed. Decoding runs on the main thread by default;
-opt into a worker pool (with a main-thread fallback) to keep it free:
+A drop-in for `THREE.DRACOLoader`. Decoding runs on the main thread by default. Opt into a worker pool if you prefer to keep it free:
 
 ```ts
 new MinidracoLoader({ workers: true }) // decode in a pool of 4 workers
@@ -39,7 +38,7 @@ const mesh = decodeDracoMesh(new Uint8Array(bytes))
 
 ## Performance
 
-Median across an 18-model corpus vs [draco.js](https://github.com/mrdoob/draco.js) and the official
+Median across 18 models vs [draco.js](https://github.com/mrdoob/draco.js) and the official
 [draco3d](https://www.npmjs.com/package/draco3d) wasm decoder (full results in
 [BENCH.md](https://github.com/verekia/minidraco/blob/main/BENCH.md)):
 
@@ -50,25 +49,12 @@ Median across an 18-model corpus vs [draco.js](https://github.com/mrdoob/draco.j
 | `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.45× faster | 🟢 1.03× faster |
 | `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.37× faster | 🟢 1.23× faster |
 
-Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and level with
-it in a real `GLTFLoader.parse` with `workers: true` and the main thread left free — warm, and
-level to ahead on the first load of a session (cold numbers swing run to run), where minidraco's
-worker pool is still JIT-warming while the wasm decoder is fetching and compiling its module (no
-`draco_decoder.wasm` to host or download here).
-
 ## Download size
-
-Minified + brotli, vs the same two decoders (regenerate with `bun run sizes`):
 
 | download (brotli)             | minidraco | vs draco.js      | vs draco3d wasm         |
 | ----------------------------- | --------- | ---------------- | ----------------------- |
 | single-threaded (default)     | 22 KB     | ⚪ even (22 KB)  | 🟢 3.7× smaller (81 KB) |
 | worker pool (`workers: true`) | 45 KB     | 🟢 not supported | 🟢 1.8× smaller (81 KB) |
-
-With `workers: true` the browser also fetches the pool module and a worker chunk holding a second
-copy of the decoder on the first decode. draco.js has no worker pool. The wasm path ships three's
-`DRACOLoader` in your bundle and fetches the wrapper and `draco_decoder.wasm`, which you must
-host, before the first decode.
 
 ## Monorepo
 
@@ -84,5 +70,5 @@ bun run bench  # cross-decoder benchmark
 
 ## License
 
-MIT — derived from [mrdoob/draco.js](https://github.com/mrdoob/draco.js) (MIT), implementing
+MIT — initially derived from [mrdoob/draco.js](https://github.com/mrdoob/draco.js) (MIT), implementing
 Google's [Draco](https://github.com/google/draco) bitstream (Apache-2.0).
