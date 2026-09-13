@@ -36,7 +36,8 @@ const borrowedUint8: Uint8Array[] = []
 // Smallest k with (1 << k) >= size.
 const sizeClass = (size: number): number => (size <= 1 ? 0 : 32 - Math.clz32(size - 1))
 
-const takeInt32 = (size: number): Int32Array => {
+// Exact-size view over a pooled buffer; contents are arbitrary.
+export const scratchInt32 = (size: number): Int32Array => {
   const k = sizeClass(size)
   if (k > MAX_CLASS) return new Int32Array(size)
   const bucket = freeInt32[k]
@@ -46,7 +47,8 @@ const takeInt32 = (size: number): Int32Array => {
   return pooled.length === size ? pooled : pooled.subarray(0, size)
 }
 
-const takeUint32 = (size: number): Uint32Array => {
+// Exact-size view over a pooled buffer; contents are arbitrary.
+export const scratchUint32 = (size: number): Uint32Array => {
   const k = sizeClass(size)
   if (k > MAX_CLASS) return new Uint32Array(size)
   const bucket = freeUint32[k]
@@ -62,7 +64,8 @@ const takeUint32 = (size: number): Uint32Array => {
 // pooled byte allocation up to 8.
 const byteCapacity = (size: number): number => (size < 8 ? 8 : (size + 7) & ~7)
 
-const takeUint8 = (size: number): Uint8Array => {
+// Exact-size view over a pooled buffer; contents are arbitrary.
+export const scratchUint8 = (size: number): Uint8Array => {
   const capacity = byteCapacity(size)
   const k = sizeClass(capacity)
   if (k > MAX_CLASS) return new Uint8Array(capacity)
@@ -73,39 +76,30 @@ const takeUint8 = (size: number): Uint8Array => {
   return pooled.length === size ? pooled : pooled.subarray(0, size)
 }
 
-// Exact-size view over a pooled buffer; contents are arbitrary.
-export const scratchInt32 = (size: number): Int32Array => takeInt32(size)
-
 // Exact-size view over a pooled buffer, with every entry set to `value`.
 export const scratchInt32Filled = (size: number, value: number): Int32Array => {
-  const view = takeInt32(size)
+  const view = scratchInt32(size)
   view.fill(value)
   return view
 }
 
-// Exact-size view over a pooled buffer; contents are arbitrary.
-export const scratchUint32 = (size: number): Uint32Array => takeUint32(size)
-
 // Exact-size view over a pooled buffer, cleared to 0.
 export const scratchUint32Zeroed = (size: number): Uint32Array => {
-  const view = takeUint32(size)
+  const view = scratchUint32(size)
   view.fill(0)
   return view
 }
 
-// Exact-size view over a pooled buffer; contents are arbitrary.
-export const scratchUint8 = (size: number): Uint8Array => takeUint8(size)
-
 // Exact-size view over a pooled buffer, cleared to 0.
 export const scratchUint8Zeroed = (size: number): Uint8Array => {
-  const view = takeUint8(size)
+  const view = scratchUint8(size)
   view.fill(0)
   return view
 }
 
 // Exact-size view over a pooled buffer, with every byte set to `value`.
 export const scratchUint8Filled = (size: number, value: number): Uint8Array => {
-  const view = takeUint8(size)
+  const view = scratchUint8(size)
   view.fill(value)
   return view
 }

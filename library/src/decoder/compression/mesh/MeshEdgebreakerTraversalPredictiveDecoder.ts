@@ -1,10 +1,10 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerTraversalPredictiveDecoder.js (MIT)
 
+import { RAnsBitDecoder } from '../bit_coders/RAnsBitDecoder'
 import { TOPOLOGY_C, TOPOLOGY_S, TOPOLOGY_L, TOPOLOGY_R, TOPOLOGY_E } from './MeshEdgebreakerShared'
 import { MeshEdgebreakerTraversalDecoder } from './MeshEdgebreakerTraversalDecoder'
 
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
-import type { RAnsBitDecoder } from '../bit_coders/RAnsBitDecoder'
 import type { CornerTable, MeshEdgebreakerDecoderImpl } from './MeshEdgebreakerDecoderImpl'
 
 // Decoder for traversal encoded with the
@@ -12,22 +12,12 @@ import type { CornerTable, MeshEdgebreakerDecoderImpl } from './MeshEdgebreakerD
 // of the decoded portion of the traversed mesh and it uses them to predict
 // symbols that are about to be decoded.
 class MeshEdgebreakerTraversalPredictiveDecoder extends MeshEdgebreakerTraversalDecoder {
-  _cornerTable: CornerTable | null
-  _numVertices: number
-  _lastSymbol: number
-  _predictedSymbol: number
-  _vertexValences: number[]
-  _predictionDecoder: RAnsBitDecoder | null
-
-  constructor() {
-    super()
-    this._cornerTable = null
-    this._numVertices = 0
-    this._lastSymbol = -1
-    this._predictedSymbol = -1
-    this._vertexValences = []
-    this._predictionDecoder = null // RAnsBitDecoder
-  }
+  _cornerTable: CornerTable | null = null
+  _numVertices = 0
+  _lastSymbol = -1
+  _predictedSymbol = -1
+  _vertexValences: number[] = []
+  _predictionDecoder: RAnsBitDecoder | null = null
 
   override init(decoder: MeshEdgebreakerDecoderImpl): void {
     super.init(decoder)
@@ -50,14 +40,8 @@ class MeshEdgebreakerTraversalPredictiveDecoder extends MeshEdgebreakerTraversal
       return false
     }
     this._vertexValences = new Array<number>(this._numVertices).fill(0)
-    this._predictionDecoder = this._createRAnsBitDecoder()
-    if (this._predictionDecoder === null) {
-      return false
-    }
-    if (!this._predictionDecoder.startDecoding(outBuffer)) {
-      return false
-    }
-    return true
+    this._predictionDecoder = new RAnsBitDecoder()
+    return this._predictionDecoder.startDecoding(outBuffer)
   }
 
   override decodeSymbol(): number {

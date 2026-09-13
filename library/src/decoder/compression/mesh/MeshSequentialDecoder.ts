@@ -7,28 +7,22 @@ import { decodeSymbols } from '../entropy/SymbolDecoding'
 import { MeshDecoder } from './MeshDecoder'
 
 class MeshSequentialDecoder extends MeshDecoder {
-  constructor() {
-    super()
-  }
-
   override decodeConnectivity(): boolean {
-    let numFaces: number | undefined
-    let numPoints: number | undefined
-
-    numFaces = decodeVarint(this.buffer()!)
+    const buffer = this.buffer()!
+    const numFaces = decodeVarint(buffer)
     if (numFaces === undefined) return false
-    numPoints = decodeVarint(this.buffer()!)
+    const numPoints = decodeVarint(buffer)
     if (numPoints === undefined) return false
 
     // Compressed sequential encoding can only handle (2^32 - 1) / 3 indices.
     if (numFaces > 0xffffffff / 3) {
       return false
     }
-    if (numFaces > this.buffer()!.remainingSize / 3) {
+    if (numFaces > buffer.remainingSize / 3) {
       return false
     }
 
-    const connectivityMethod = this.buffer()!.decodeUint8()
+    const connectivityMethod = buffer.decodeUint8()
     if (connectivityMethod === undefined) {
       return false
     }
@@ -45,7 +39,6 @@ class MeshSequentialDecoder extends MeshDecoder {
       mesh.setNumFaces(numFaces)
       const faces = mesh.faces_
       const numIndices = numFaces * 3
-      const buffer = this.buffer()!
 
       if (numPoints < 256) {
         const src = buffer.decodeBytesView(numIndices)

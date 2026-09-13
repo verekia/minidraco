@@ -11,12 +11,7 @@ import type { AttributeTransformData } from './AttributeTransformData'
 import type { PointAttribute } from './PointAttribute'
 
 class AttributeOctahedronTransform extends AttributeTransform {
-  _quantizationBits: number
-
-  constructor() {
-    super()
-    this._quantizationBits = -1
-  }
+  _quantizationBits = -1
 
   override copyToAttributeTransformData(outData: AttributeTransformData): void {
     outData.transformType = AttributeTransformType.OCTAHEDRON_TRANSFORM
@@ -55,8 +50,8 @@ class AttributeOctahedronTransform extends AttributeTransform {
     const dstData = targetAttribute.buffer!.data
     const dstF32 = new Float32Array(dstData.buffer, dstData.byteOffset + targetAttribute.byteOffset, numPoints * 3)
 
-    // OctahedronToolBox.quantizedOctahedralCoordsToUnitVector inlined (keep in
-    // sync): one loop writing straight into the float32 view instead of two
+    // The source's OctahedronToolBox.quantizedOctahedralCoordsToUnitVector,
+    // inlined: one loop writing straight into the float32 view instead of two
     // calls and a 3-element temp per point. Every Math.fround is kept exactly
     // where the toolbox has it -- that float32 rounding sequence is what makes
     // the normals bit-identical to the WASM decoder.

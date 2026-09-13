@@ -12,44 +12,25 @@ const kInvalidVertexIndex = -1
 
 // DFS traversal of a mesh over the CornerTable.
 class DepthFirstTraverser {
-  _cornerTable: CornerTable | MeshAttributeCornerTable | null
-  _observer: MeshAttributeIndicesEncodingObserver | null
-  _isFaceVisited: Uint8Array | null
-  _isVertexVisited: Uint8Array | null
-  _cornerTraversalStack: Int32Array | number[]
-  _numVisitedFaces: number
-  _traversalMethodId: number
-  emitsPointIds: boolean
-  _cornerToVertex: Int32Array | number[] | null
-  _oppositeCorners: Int32Array | number[] | null
-  _vertexLeftmost: Int32Array | number[] | null
-  _numCorners: number
-
-  constructor() {
-    this._cornerTable = null
-    this._observer = null
-    this._isFaceVisited = null
-    this._isVertexVisited = null
-    this._cornerTraversalStack = []
-    this._numVisitedFaces = 0
-    // Identifies the traversal order for the shared traversal cache
-    // (MESH_TRAVERSAL_DEPTH_FIRST). See MeshTraversalSequencer.
-    this._traversalMethodId = 0
-    // The sequencer derives the point id sequence from the corner map after
-    // the traversal (see traverseFromCorner).
-    this.emitsPointIds = false
-    this._cornerToVertex = null
-    this._oppositeCorners = null
-    this._vertexLeftmost = null
-    this._numCorners = 0
-  }
+  _cornerTable: CornerTable | MeshAttributeCornerTable | null = null
+  _observer: MeshAttributeIndicesEncodingObserver | null = null
+  _isFaceVisited: Uint8Array | null = null
+  _cornerTraversalStack: Int32Array | number[] = []
+  _numVisitedFaces = 0
+  // Identifies the traversal order for the shared traversal cache
+  // (MESH_TRAVERSAL_DEPTH_FIRST). See MeshTraversalSequencer.
+  _traversalMethodId = 0
+  // The sequencer derives the point id sequence from the corner map after
+  // the traversal (see traverseFromCorner).
+  emitsPointIds = false
+  _cornerToVertex: Int32Array | number[] | null = null
+  _oppositeCorners: Int32Array | number[] | null = null
+  _vertexLeftmost: Int32Array | number[] | null = null
+  _numCorners = 0
 
   init(cornerTable: CornerTable | MeshAttributeCornerTable, observer: MeshAttributeIndicesEncodingObserver): void {
     this._cornerTable = cornerTable
     this._observer = observer
-    this._isFaceVisited = null
-    this._isVertexVisited = null
-    this._numVisitedFaces = 0
     // Extract the corner table's connectivity as flat arrays once, so the
     // traversal reads them directly (via the monomorphic _* helpers below)
     // instead of dispatching through the corner table on every corner. The
@@ -81,8 +62,6 @@ class DepthFirstTraverser {
     // one fewer random-access array in the hottest loop.
     this._cornerTraversalStack = scratchInt32(this._numCorners)
   }
-
-  onTraversalEnd(): void {}
 
   // Traverses every face, seeding a new traversal at the first corner of each
   // face not yet reached. The visited check lives here rather than behind a

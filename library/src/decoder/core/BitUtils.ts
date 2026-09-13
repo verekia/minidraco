@@ -11,12 +11,3 @@ export function convertSymbolsToSignedInts(
     output[i] = (val >>> 1) ^ -(val & 1)
   }
 }
-
-export function convertSymbolToSignedInt(val: number): number {
-  const isPositive = (val & 1) === 0
-  val >>>= 1
-  if (isPositive) {
-    return val
-  }
-  return -val - 1
-}

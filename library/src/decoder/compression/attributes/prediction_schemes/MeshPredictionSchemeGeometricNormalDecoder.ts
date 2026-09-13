@@ -1,7 +1,6 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/MeshPredictionSchemeGeometricNormalDecoder.js (MIT)
 
 import { RAnsBitDecoder } from '../../bit_coders/RAnsBitDecoder'
-import { NormalPredictionMode } from '../../config/CompressionShared'
 import { OctahedronToolBox } from '../NormalCompressionUtils'
 import { MeshPredictionSchemeDecoder } from './MeshPredictionSchemeDecoder'
 import { MeshPredictionSchemeGeometricNormalPredictorArea } from './MeshPredictionSchemeGeometricNormalPredictorArea'
@@ -19,32 +18,19 @@ const GEOMETRY_ATTRIBUTE_POSITION = 0
  */
 class MeshPredictionSchemeGeometricNormalDecoder extends MeshPredictionSchemeDecoder {
   _predictor: MeshPredictionSchemeGeometricNormalPredictorArea
-  _octahedronToolBox: OctahedronToolBox
-  _flipNormalBitDecoder: RAnsBitDecoder
+  _octahedronToolBox = new OctahedronToolBox()
+  _flipNormalBitDecoder = new RAnsBitDecoder()
 
-  constructor(
-    attribute: PointAttribute,
-    transform: PredictionSchemeDecodingTransform,
-    meshData: MeshPredictionSchemeData,
-  ) {
-    super(attribute, transform, meshData)
+  constructor(transform: PredictionSchemeDecodingTransform, meshData: MeshPredictionSchemeData) {
+    super(transform, meshData)
     this._predictor = new MeshPredictionSchemeGeometricNormalPredictorArea(meshData)
-    this._octahedronToolBox = new OctahedronToolBox()
-    this._flipNormalBitDecoder = new RAnsBitDecoder()
-  }
-
-  override isInitialized(): boolean {
-    if (!this._predictor.isInitialized()) return false
-    if (!this._meshData.isInitialized()) return false
-    if (!this._octahedronToolBox.isInitialized()) return false
-    return true
   }
 
   override getNumParentAttributes(): number {
     return 1
   }
 
-  override getParentAttributeType(i: number): number {
+  override getParentAttributeType(_i: number): number {
     return GEOMETRY_ATTRIBUTE_POSITION
   }
 
@@ -55,33 +41,21 @@ class MeshPredictionSchemeGeometricNormalDecoder extends MeshPredictionSchemeDec
     return true
   }
 
-  setQuantizationBits(q: number): void {
-    this._octahedronToolBox.setQuantizationBits(q)
-  }
-
   override decodePredictionData(buffer: DecoderBuffer): boolean {
     if (!this._transform.decodeTransformData(buffer)) return false
 
-    if (buffer.bitstreamVersion < 0x0202) {
-      const predictionMode = buffer.decodeUint8()
-      if (predictionMode === undefined) return false
-      if (predictionMode > NormalPredictionMode.TRIANGLE_AREA) return false
-      if (!this._predictor.setNormalPredictionMode(predictionMode)) return false
-    }
-
-    if (!this._flipNormalBitDecoder.startDecoding(buffer)) return false
-
-    return true
+    return this._flipNormalBitDecoder.startDecoding(buffer)
   }
 
   override computeOriginalValues(
     inCorr: Int32Array,
     outData: Int32Array,
-    size: number,
-    numComponents: number,
+    _size: number,
+    _numComponents: number,
     entryToPointIdMap: Int32Array,
   ): boolean {
-    this.setQuantizationBits(this._transform.quantizationBits!())
+    // Only the octahedral transforms reach this scheme (see the factory).
+    this._octahedronToolBox.setQuantizationBits(this._transform.quantizationBits!())
     this._predictor.setEntryToPointIdMap(entryToPointIdMap)
 
     const cornerMapSize = this._meshData.dataToCornerMap.length

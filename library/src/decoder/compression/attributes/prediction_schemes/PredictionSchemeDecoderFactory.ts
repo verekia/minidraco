@@ -9,7 +9,6 @@ import { MeshPredictionSchemeParallelogramDecoder } from './MeshPredictionScheme
 import { MeshPredictionSchemeTexCoordsPortableDecoder } from './MeshPredictionSchemeTexCoordsPortableDecoder'
 import { PredictionSchemeDeltaDecoder } from './PredictionSchemeDeltaDecoder'
 
-import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { MeshDecoder } from '../../mesh/MeshDecoder'
 import type { PointCloudDecoder } from '../../point_cloud/PointCloudDecoder'
 import type { MeshPredictionSchemeDecoder } from './MeshPredictionSchemeDecoder'
@@ -17,39 +16,37 @@ import type { PredictionSchemeDecoder, PredictionSchemeDecodingTransform } from 
 
 function createMeshPredictionSchemeDecoder(
   method: number,
-  attribute: PointAttribute,
   transform: PredictionSchemeDecodingTransform,
   meshData: MeshPredictionSchemeData,
-  bitstreamVersion: number,
-  transformType: number,
 ): MeshPredictionSchemeDecoder | null {
+  const transformType = transform.getType()
+
   // Normal octahedron transforms only support geometric normal prediction.
   if (
     transformType === PredictionSchemeTransformType.PREDICTION_TRANSFORM_NORMAL_OCTAHEDRON_CANONICALIZED ||
     transformType === PredictionSchemeTransformType.PREDICTION_TRANSFORM_NORMAL_OCTAHEDRON
   ) {
     if (method === PredictionSchemeMethod.MESH_PREDICTION_GEOMETRIC_NORMAL) {
-      return new MeshPredictionSchemeGeometricNormalDecoder(attribute, transform, meshData)
+      return new MeshPredictionSchemeGeometricNormalDecoder(transform, meshData)
     }
     return null
   }
 
-  // Wrap and delta transforms accept any mesh prediction scheme.
+  // The wrap transform pairs with the parallelogram and tex-coord schemes.
+  // Geometric normal prediction needs the octahedral transform's quantization
+  // bits, so (as in the C++ wrap dispatch) it is not offered here.
   switch (method) {
     case PredictionSchemeMethod.MESH_PREDICTION_PARALLELOGRAM:
-      return new MeshPredictionSchemeParallelogramDecoder(attribute, transform, meshData)
+      return new MeshPredictionSchemeParallelogramDecoder(transform, meshData)
 
     case PredictionSchemeMethod.MESH_PREDICTION_MULTI_PARALLELOGRAM:
-      return new MeshPredictionSchemeMultiParallelogramDecoder(attribute, transform, meshData)
+      return new MeshPredictionSchemeMultiParallelogramDecoder(transform, meshData)
 
     case PredictionSchemeMethod.MESH_PREDICTION_CONSTRAINED_MULTI_PARALLELOGRAM:
-      return new MeshPredictionSchemeConstrainedMultiParallelogramDecoder(attribute, transform, meshData)
+      return new MeshPredictionSchemeConstrainedMultiParallelogramDecoder(transform, meshData)
 
     case PredictionSchemeMethod.MESH_PREDICTION_TEX_COORDS_PORTABLE:
-      return new MeshPredictionSchemeTexCoordsPortableDecoder(attribute, transform, meshData)
-
-    case PredictionSchemeMethod.MESH_PREDICTION_GEOMETRIC_NORMAL:
-      return new MeshPredictionSchemeGeometricNormalDecoder(attribute, transform, meshData)
+      return new MeshPredictionSchemeTexCoordsPortableDecoder(transform, meshData)
 
     default:
       return null
@@ -71,48 +68,23 @@ function createPredictionSchemeForDecoder(
     return null
   }
 
-  const att = decoder.pointCloud()!.attribute(attId)
+  // Only mesh decoders exist (Decode.ts accepts triangular meshes only).
+  const meshDecoder = decoder as MeshDecoder
+  const cornerTable = meshDecoder.getCornerTable()
+  const encodingData = meshDecoder.getAttributeEncodingData(attId)
 
-  if (decoder.getGeometryType() === 1) {
-    // TRIANGULAR_MESH
-    const meshDecoder = decoder as MeshDecoder
-    const cornerTable = meshDecoder.getCornerTable()
-    const encodingData = meshDecoder.getAttributeEncodingData(attId)
-
-    if (cornerTable !== null && encodingData !== null) {
-      const meshData = new MeshPredictionSchemeData()
-      const attCornerTable = meshDecoder.getAttributeCornerTable(attId)
-
-      if (attCornerTable !== null) {
-        meshData.set(
-          meshDecoder.mesh(),
-          attCornerTable,
-          encodingData.encodedAttributeValueIndexToCornerMap,
-          encodingData.vertexToEncodedAttributeValueIndexMap,
-        )
-      } else {
-        meshData.set(
-          meshDecoder.mesh(),
-          cornerTable,
-          encodingData.encodedAttributeValueIndexToCornerMap,
-          encodingData.vertexToEncodedAttributeValueIndexMap,
-        )
-      }
-
-      const transformType = transform.getType ? transform.getType() : -1
-      const ret = createMeshPredictionSchemeDecoder(
-        method,
-        att,
-        transform,
-        meshData,
-        decoder.bitstreamVersion(),
-        transformType,
-      )
-      if (ret !== null) return ret
-    }
+  if (cornerTable !== null && encodingData !== null) {
+    // Attributes with their own seams use their attribute corner table.
+    const attCornerTable = meshDecoder.getAttributeCornerTable(attId)
+    const meshData = new MeshPredictionSchemeData(
+      attCornerTable !== null ? attCornerTable : cornerTable,
+      encodingData.encodedAttributeValueIndexToCornerMap,
+      encodingData.vertexToEncodedAttributeValueIndexMap,
+    )
+    const ret = createMeshPredictionSchemeDecoder(method, transform, meshData)
+    if (ret !== null) return ret
   }
-
-  return new PredictionSchemeDeltaDecoder(att, transform)
+  return new PredictionSchemeDeltaDecoder(transform)
 }
 
 export { createPredictionSchemeForDecoder }

@@ -22,7 +22,6 @@ import { MaxPredictionDegreeTraverser } from './traverser/MaxPredictionDegreeTra
 import { MeshAttributeIndicesEncodingObserver } from './traverser/MeshAttributeIndicesEncodingObserver'
 import { MeshTraversalSequencer } from './traverser/MeshTraversalSequencer'
 
-import type { Mesh } from '../../mesh/Mesh'
 import type { MeshEdgebreakerDecoder } from './MeshEdgebreakerDecoder'
 import type { MeshEdgebreakerTraversalDecoder } from './MeshEdgebreakerTraversalDecoder'
 import type { TraversalCache } from './traverser/MeshTraversalSequencer'
@@ -37,95 +36,64 @@ interface TopologySplitResult {
 // Edgebreaker decoder; based on Isenburg et al'02 "Spirale Reversi: Reverse
 // decoding of the Edgebreaker encoding".
 class MeshEdgebreakerDecoderImpl {
-  _decoder: MeshEdgebreakerDecoder | null
-  _cornerTable: CornerTable | null
-  _cornerTraversalStack: number[]
-  _topologySplitData: TopologySplitEventData[]
-  _initFaceConfigurations: boolean[]
-  _initCorners: number[]
-  _isVertHole: Uint8Array | number[]
-  _numEncodedVertices: number
-  _posEncodingData: MeshAttributeIndicesEncodingData
-  _posDataDecoderId: number
-  _vertexTraversalCache: TraversalCache
-  _attributeData: AttributeData[]
+  _decoder: MeshEdgebreakerDecoder
+  _cornerTable: CornerTable | null = null
+  _topologySplitData: TopologySplitEventData[] = []
+  _isVertHole: Uint8Array = new Uint8Array(0)
+  _numEncodedVertices = 0
+  _posEncodingData = new MeshAttributeIndicesEncodingData()
+  _posDataDecoderId = -1
+  // Cache of vertex-traversal results keyed by corner table, so attributes
+  // sharing connectivity traverse once.
+  _vertexTraversalCache: TraversalCache = new Map()
+  _attributeData: AttributeData[] = []
   _traversalDecoder: MeshEdgebreakerTraversalDecoder
   // One corner per point id (decode-scoped scratch), filled by
   // _assignAttributeVerticesAndPoints; null when points are the base vertices.
-  _pointCorner: Int32Array | null
+  _pointCorner: Int32Array | null = null
 
-  constructor(TraversalDecoderClass: new () => MeshEdgebreakerTraversalDecoder) {
-    this._decoder = null
-    this._cornerTable = null
-    this._cornerTraversalStack = []
-    this._topologySplitData = []
-    this._initFaceConfigurations = []
-    this._initCorners = []
-    this._isVertHole = []
-    this._numEncodedVertices = 0
-    this._posEncodingData = new MeshAttributeIndicesEncodingData()
-    this._posDataDecoderId = -1
-    // Cache of vertex-traversal results keyed by corner table, so attributes
-    // sharing connectivity traverse once.
-    this._vertexTraversalCache = new Map()
-    this._attributeData = []
-    this._traversalDecoder = new TraversalDecoderClass()
-    this._pointCorner = null
-  }
-
-  init(decoder: MeshEdgebreakerDecoder): boolean {
+  constructor(decoder: MeshEdgebreakerDecoder, TraversalDecoderClass: new () => MeshEdgebreakerTraversalDecoder) {
     this._decoder = decoder
-    return true
-  }
-
-  getDecoder(): MeshEdgebreakerDecoder | null {
-    return this._decoder
+    this._traversalDecoder = new TraversalDecoderClass()
   }
 
   getCornerTable(): CornerTable | null {
     return this._cornerTable
   }
 
-  getAttributeCornerTable(attId: number): MeshAttributeCornerTable | null {
+  // The attribute data set whose attributes decoder owns attId, if any.
+  _findAttributeData(attId: number): AttributeData | null {
     for (let i = 0; i < this._attributeData.length; ++i) {
-      const decoderId = this._attributeData[i].decoderId
-      if (decoderId < 0 || decoderId >= this._decoder!.numAttributesDecoders()) {
+      const ad = this._attributeData[i]
+      if (ad.decoderId < 0 || ad.decoderId >= this._decoder.numAttributesDecoders()) {
         continue
       }
-      const dec = this._decoder!.attributesDecoder(decoderId)!
+      const dec = this._decoder.attributesDecoder(ad.decoderId)!
       for (let j = 0; j < dec.getNumAttributes(); ++j) {
         if (dec.getAttributeId(j) === attId) {
-          if (this._attributeData[i].isConnectivityUsed) {
-            return this._attributeData[i].connectivityData
-          }
-          return null
+          return ad
         }
       }
     }
     return null
   }
 
+  getAttributeCornerTable(attId: number): MeshAttributeCornerTable | null {
+    const ad = this._findAttributeData(attId)
+    return ad !== null && ad.isConnectivityUsed ? ad.connectivityData : null
+  }
+
   getAttributeEncodingData(attId: number): MeshAttributeIndicesEncodingData {
-    for (let i = 0; i < this._attributeData.length; ++i) {
-      const decoderId = this._attributeData[i].decoderId
-      if (decoderId < 0 || decoderId >= this._decoder!.numAttributesDecoders()) {
-        continue
-      }
-      const dec = this._decoder!.attributesDecoder(decoderId)!
-      for (let j = 0; j < dec.getNumAttributes(); ++j) {
-        if (dec.getAttributeId(j) === attId) {
-          return this._attributeData[i].encodingData
-        }
-      }
-    }
-    return this._posEncodingData
+    const ad = this._findAttributeData(attId)
+    return ad !== null ? ad.encodingData : this._posEncodingData
   }
 
   createAttributesDecoder(attDecoderId: number): boolean {
-    const attDataId = this._decoder!.buffer()!.decodeInt8()
+    const buffer = this._decoder.buffer()!
+    const attDataId = buffer.decodeInt8()
     if (attDataId === undefined) return false
 
-    const decoderType = this._decoder!.buffer()!.decodeUint8()
+    const decoderType = buffer.decodeUint8()
     if (decoderType === undefined) return false
 
     if (attDataId >= 0) {
@@ -143,79 +111,50 @@ class MeshEdgebreakerDecoderImpl {
       this._posDataDecoderId = attDecoderId
     }
 
-    const traversalMethod = this._decoder!.buffer()!.decodeUint8()
-    if (traversalMethod === undefined) return false
-    if (traversalMethod >= MeshTraversalMethod.NUM_TRAVERSAL_METHODS) {
+    const traversalMethod = buffer.decodeUint8()
+    if (traversalMethod === undefined || traversalMethod >= MeshTraversalMethod.NUM_TRAVERSAL_METHODS) {
       return false
     }
 
-    const mesh = this._decoder!.mesh()!
-    let sequencer: MeshTraversalSequencer | null = null
-
+    let encodingData: MeshAttributeIndicesEncodingData
+    let cornerTable: CornerTable | MeshAttributeCornerTable
     if (decoderType === MeshAttributeElementType.MESH_VERTEX_ATTRIBUTE) {
-      let encodingData: MeshAttributeIndicesEncodingData | null = null
       if (attDataId < 0) {
         encodingData = this._posEncodingData
       } else {
         encodingData = this._attributeData[attDataId].encodingData
         this._attributeData[attDataId].isConnectivityUsed = false
       }
-
-      sequencer = this._createVertexTraversalSequencer(encodingData, this._cornerTable!, mesh, traversalMethod)
+      cornerTable = this._cornerTable!
     } else {
       // Per-corner attribute decoder.
-      if (traversalMethod !== MeshTraversalMethod.MESH_TRAVERSAL_DEPTH_FIRST) {
+      if (traversalMethod !== MeshTraversalMethod.MESH_TRAVERSAL_DEPTH_FIRST || attDataId < 0) {
         return false
       }
-      if (attDataId < 0) {
-        return false
-      }
-
-      const encodingData = this._attributeData[attDataId].encodingData
-      const attCornerTable = this._attributeData[attDataId].connectivityData
-
-      sequencer = this._createVertexTraversalSequencer(encodingData, attCornerTable, mesh, traversalMethod)
+      encodingData = this._attributeData[attDataId].encodingData
+      cornerTable = this._attributeData[attDataId].connectivityData
     }
 
-    if (!sequencer) {
-      return false
-    }
-
-    const attController = new SequentialAttributeDecodersController(sequencer)
-    return this._decoder!.setAttributesDecoder(attDecoderId, attController)
-  }
-
-  _createVertexTraversalSequencer(
-    encodingData: MeshAttributeIndicesEncodingData,
-    cornerTable: CornerTable | MeshAttributeCornerTable,
-    mesh: Mesh,
-    traversalMethod: number,
-  ): MeshTraversalSequencer {
-    const traversalSequencer = new MeshTraversalSequencer(
-      mesh,
-      encodingData,
-      this._vertexTraversalCache,
-      this._pointCorner,
-    )
-
-    const observer = new MeshAttributeIndicesEncodingObserver(cornerTable, mesh, traversalSequencer, encodingData)
-
+    const mesh = this._decoder.mesh()!
+    const sequencer = new MeshTraversalSequencer(mesh, encodingData, this._vertexTraversalCache, this._pointCorner)
+    const observer = new MeshAttributeIndicesEncodingObserver(mesh, sequencer, encodingData)
     const traverser =
       traversalMethod === MeshTraversalMethod.MESH_TRAVERSAL_PREDICTION_DEGREE
         ? new MaxPredictionDegreeTraverser()
         : new DepthFirstTraverser()
     traverser.init(cornerTable, observer)
+    sequencer.setTraverser(traverser)
 
-    traversalSequencer.setTraverser(traverser)
-    return traversalSequencer
+    return this._decoder.setAttributesDecoder(attDecoderId, new SequentialAttributeDecodersController(sequencer))
   }
 
   decodeConnectivity(): boolean {
-    const numEncodedVertices = decodeVarint(this._decoder!.buffer()!)
+    const buffer = this._decoder.buffer()!
+    const numEncodedVertices = decodeVarint(buffer)
     if (numEncodedVertices === undefined) return false
     this._numEncodedVertices = numEncodedVertices
 
-    const numFaces = decodeVarint(this._decoder!.buffer()!)
+    const numFaces = decodeVarint(buffer)
     if (numFaces === undefined) return false
 
     if (numFaces > 0x7fffffff / 3) {
@@ -233,10 +172,10 @@ class MeshEdgebreakerDecoderImpl {
       return false
     }
 
-    const numAttributeData = this._decoder!.buffer()!.decodeUint8()
+    const numAttributeData = buffer.decodeUint8()
     if (numAttributeData === undefined) return false
 
-    const numEncodedSymbols = decodeVarint(this._decoder!.buffer()!)
+    const numEncodedSymbols = decodeVarint(buffer)
     if (numEncodedSymbols === undefined) return false
 
     if (numFaces < numEncodedSymbols) {
@@ -247,19 +186,13 @@ class MeshEdgebreakerDecoderImpl {
       return false
     }
 
-    const numEncodedSplitSymbols = decodeVarint(this._decoder!.buffer()!)
+    const numEncodedSplitSymbols = decodeVarint(buffer)
     if (numEncodedSplitSymbols === undefined) return false
 
     if (numEncodedSplitSymbols > numEncodedSymbols) {
       return false // Split symbols are a sub-set of all symbols.
     }
     this._cornerTable = new CornerTable()
-    this._vertexTraversalCache = new Map()
-    this._topologySplitData = []
-    this._initFaceConfigurations = []
-    this._initCorners = []
-
-    this._attributeData = []
     for (let i = 0; i < numAttributeData; ++i) {
       const ad = new AttributeData()
       // Decode-scoped: consumed a few lines below, before the decode returns.
@@ -268,16 +201,14 @@ class MeshEdgebreakerDecoderImpl {
       this._attributeData.push(ad)
     }
 
-    if (!this._cornerTable.reset(numFaces, this._numEncodedVertices + numEncodedSplitSymbols)) {
-      return false
-    }
+    this._cornerTable.reset(numFaces, this._numEncodedVertices + numEncodedSplitSymbols)
 
     // All vertices start as holes (boundaries). Uint8Array (1=hole) keeps the
     // per-vertex reads/writes monomorphic; vertex count never exceeds this
     // length (enforced via maxNumVertices), so fixed-size storage is safe.
     this._isVertHole = scratchUint8Filled(this._numEncodedVertices + numEncodedSplitSymbols, 1)
 
-    if (this._decodeHoleAndTopologySplitEvents(this._decoder!.buffer()!) === -1) {
+    if (!this._decodeHoleAndTopologySplitEvents(buffer)) {
       return false
     }
 
@@ -296,11 +227,7 @@ class MeshEdgebreakerDecoderImpl {
       return false
     }
 
-    this._decoder!.buffer()!.init(
-      traversalEndBuffer.dataHead,
-      traversalEndBuffer.remainingSize,
-      this._decoder!.buffer()!.bitstreamVersion,
-    )
+    buffer.init(traversalEndBuffer.dataHead, traversalEndBuffer.remainingSize)
 
     if (this._attributeData.length > 0) {
       this._decodeAttributeConnectivities()
@@ -375,10 +302,6 @@ class MeshEdgebreakerDecoderImpl {
       }
       this._attributeData[i].encodingData.init(attConnectivityVerts)
     }
-    return true
-  }
-
-  onAttributesDecoded(): boolean {
     return true
   }
 
@@ -726,13 +649,6 @@ class MeshEdgebreakerDecoderImpl {
         isVertHole[vertX] = 0
         isVertHole[vertP] = 0
         isVertHole[vertN] = 0
-
-        this._initFaceConfigurations.push(true)
-        this._initCorners.push(newCorner)
-      } else {
-        // The initial face wasn't interior.
-        this._initFaceConfigurations.push(false)
-        this._initCorners.push(corner)
       }
     }
 
@@ -812,24 +728,24 @@ class MeshEdgebreakerDecoderImpl {
 
   // Hole events were removed from the bitstream in 2.1; for 2.2 this only
   // decodes the inline topology-split events.
-  _decodeHoleAndTopologySplitEvents(decoderBuffer: DecoderBuffer): number {
+  _decodeHoleAndTopologySplitEvents(decoderBuffer: DecoderBuffer): boolean {
     const numTopologySplits = decodeVarint(decoderBuffer)
-    if (numTopologySplits === undefined) return -1
+    if (numTopologySplits === undefined) return false
 
     if (numTopologySplits > 0) {
       if (numTopologySplits > this._cornerTable!.numFaces()) {
-        return -1
+        return false
       }
       // Source and split symbol ids use delta + varint coding.
       let lastSourceSymbolId = 0
       for (let i = 0; i < numTopologySplits; ++i) {
         const eventData = new TopologySplitEventData()
         const delta = decodeVarint(decoderBuffer)
-        if (delta === undefined) return -1
+        if (delta === undefined) return false
         eventData.sourceSymbolId = delta + lastSourceSymbolId
         const delta2 = decodeVarint(decoderBuffer)
-        if (delta2 === undefined) return -1
-        if (delta2 > eventData.sourceSymbolId) return -1
+        if (delta2 === undefined) return false
+        if (delta2 > eventData.sourceSymbolId) return false
         eventData.splitSymbolId = eventData.sourceSymbolId - delta2
         lastSourceSymbolId = eventData.sourceSymbolId
         this._topologySplitData.push(eventData)
@@ -842,7 +758,7 @@ class MeshEdgebreakerDecoderImpl {
       }
       decoderBuffer.endBitDecoding()
     }
-    return decoderBuffer.decodedSize
+    return true
   }
 
   // Decode every face's attribute seam connectivity in one flat pass over
@@ -927,7 +843,7 @@ class MeshEdgebreakerDecoderImpl {
 
   // Position-only connectivity: vertex indices equal point indices.
   _assignPointsToVertices(numConnectivityVerts: number): void {
-    const mesh = this._decoder!.mesh()!
+    const mesh = this._decoder.mesh()!
     const ct = this._cornerTable!
     mesh.setNumFaces(ct.numFaces())
     const numCorners = ct.numCorners()
@@ -937,7 +853,7 @@ class MeshEdgebreakerDecoderImpl {
       faces[c] = baseCornerToVertex[c]
     }
     this._pointCorner = null
-    this._decoder!.pointCloud()!.setNumPoints(numConnectivityVerts)
+    this._decoder.pointCloud()!.setNumPoints(numConnectivityVerts)
   }
 
   // One walk around every vertex ring that (a) numbers the attribute vertices
@@ -961,7 +877,7 @@ class MeshEdgebreakerDecoderImpl {
   // extended leftwards first, so the walk covers exactly the corners the
   // separate passes would have reached.
   _assignAttributeVerticesAndPoints(tables: MeshAttributeCornerTable[]): boolean {
-    const mesh = this._decoder!.mesh()!
+    const mesh = this._decoder.mesh()!
     const ct = this._cornerTable!
     mesh.setNumFaces(ct.numFaces())
     const numCorners = ct.numCorners()
@@ -969,7 +885,7 @@ class MeshEdgebreakerDecoderImpl {
     const faces = mesh.faces_
     const vertexLeftmost = ct.vertexLeftmostCornerArray()
     const baseOpposite = ct.oppositeCornerArray()
-    const isVertHole = this._isVertHole as Uint8Array
+    const isVertHole = this._isVertHole
 
     const numTables = tables.length
     const attCornerToVertex = new Array<Int32Array>(numTables)
@@ -1177,22 +1093,16 @@ class MeshEdgebreakerDecoderImpl {
       tables[t].setRecomputedVertices(leftMostMaps[t], numAttVertices[t])
     }
     this._pointCorner = pointCorner
-    this._decoder!.pointCloud()!.setNumPoints(numPoints)
+    this._decoder.pointCloud()!.setNumPoints(numPoints)
     return true
   }
 }
 
 // Helper class for mesh attribute indices encoding data.
 class MeshAttributeIndicesEncodingData {
-  _vertexToEncodedAttributeValueIndexMap: Int32Array
-  _encodedAttributeValueIndexToCornerMap: Int32Array
-  _numValues: number
-
-  constructor() {
-    this._vertexToEncodedAttributeValueIndexMap = new Int32Array(0)
-    this._encodedAttributeValueIndexToCornerMap = new Int32Array(0)
-    this._numValues = 0
-  }
+  vertexToEncodedAttributeValueIndexMap: Int32Array = new Int32Array(0)
+  encodedAttributeValueIndexToCornerMap: Int32Array = new Int32Array(0)
+  numValues = 0
 
   init(numVertices: number): void {
     // Int32Array (non-negative data indices) keeps the hot prediction-lookup
@@ -1202,77 +1112,41 @@ class MeshAttributeIndicesEncodingData {
     // the sign as its vertex-visited flag (assigned entries are always >= 0);
     // vertices no face reaches keep -1, and are never read back on well-formed
     // input (the traversal covers every face corner's vertex).
-    this._vertexToEncodedAttributeValueIndexMap = scratchInt32Filled(numVertices, -1)
-    this._encodedAttributeValueIndexToCornerMap = scratchInt32(numVertices)
-    this._numValues = 0
+    this.vertexToEncodedAttributeValueIndexMap = scratchInt32Filled(numVertices, -1)
+    this.encodedAttributeValueIndexToCornerMap = scratchInt32(numVertices)
+    this.numValues = 0
   }
 
   // Adopts a traversal result from an identical corner table, avoiding a
   // redundant traversal. The maps depend only on connectivity and are read-only
   // downstream, so sharing is safe.
   adoptTraversalResult(vertexToEncodedMap: Int32Array, encodedToCornerMap: Int32Array, numValues: number): void {
-    this._vertexToEncodedAttributeValueIndexMap = vertexToEncodedMap
-    this._encodedAttributeValueIndexToCornerMap = encodedToCornerMap
-    this._numValues = numValues
-  }
-
-  get vertexToEncodedAttributeValueIndexMap(): Int32Array {
-    return this._vertexToEncodedAttributeValueIndexMap
-  }
-
-  get encodedAttributeValueIndexToCornerMap(): Int32Array {
-    return this._encodedAttributeValueIndexToCornerMap
-  }
-
-  get numValues(): number {
-    return this._numValues
-  }
-
-  set numValues(val: number) {
-    this._numValues = val
+    this.vertexToEncodedAttributeValueIndexMap = vertexToEncodedMap
+    this.encodedAttributeValueIndexToCornerMap = encodedToCornerMap
+    this.numValues = numValues
   }
 }
 
 // Per-attribute data used by the edgebreaker decoder.
 class AttributeData {
-  decoderId: number
-  connectivityData: MeshAttributeCornerTable
-  isConnectivityUsed: boolean
-  encodingData: MeshAttributeIndicesEncodingData
-  attributeSeamCorners: Int32Array
-  numSeamCorners: number
-
-  constructor() {
-    this.decoderId = -1
-    this.connectivityData = new MeshAttributeCornerTable()
-    this.isConnectivityUsed = true
-    this.encodingData = new MeshAttributeIndicesEncodingData()
-    this.attributeSeamCorners = new Int32Array(0)
-    this.numSeamCorners = 0
-  }
+  decoderId = -1
+  connectivityData = new MeshAttributeCornerTable()
+  isConnectivityUsed = true
+  encodingData = new MeshAttributeIndicesEncodingData()
+  attributeSeamCorners: Int32Array = new Int32Array(0)
+  numSeamCorners = 0
 }
 
 // Minimal CornerTable for the decoder (the full one lives in the mesh module).
 class CornerTable {
-  _numFaces: number
-  _numCorners: number
-  _numVertices: number
-  _cornerToVertex: Int32Array | null // corner -> vertex
-  _oppositeCorners: Int32Array | null // corner -> opposite corner
-  _vertexCorners: Int32Array | null // vertex -> left-most corner
-  _swingRight: Int32Array | null // corner -> next corner around its vertex, CW
+  _numFaces = 0
+  _numCorners = 0
+  _numVertices = 0
+  _cornerToVertex: Int32Array | null = null // corner -> vertex
+  _oppositeCorners: Int32Array | null = null // corner -> opposite corner
+  _vertexCorners: Int32Array | null = null // vertex -> left-most corner
 
-  constructor() {
-    this._numFaces = 0
-    this._numCorners = 0
-    this._numVertices = 0
-    this._cornerToVertex = null
-    this._oppositeCorners = null
-    this._vertexCorners = null
-    this._swingRight = null
-  }
-
-  reset(numFaces: number, numVertices: number): boolean {
+  reset(numFaces: number, numVertices: number): void {
     this._numFaces = numFaces
     this._numCorners = numFaces * 3
     // C++ reserve() allocates capacity but keeps size 0; vertices are added
@@ -1283,34 +1157,6 @@ class CornerTable {
     this._cornerToVertex = scratchInt32Filled(this._numCorners, -1)
     this._oppositeCorners = scratchInt32Filled(this._numCorners, -1)
     this._vertexCorners = scratchInt32Filled(numVertices, -1)
-    this._swingRight = null
-    return true
-  }
-
-  // swingRight(c) = previous(opposite(previous(c))) for every corner. Walking
-  // the corner ring of a vertex is the inner loop of both the attribute-vertex
-  // recompute and the point assignment, and each of those passes otherwise
-  // pays two modulus-by-3 chains per step on top of the opposite lookup. Built
-  // lazily -- callers only reach it once connectivity is final -- from
-  // decode-scoped scratch, and dropped by reset().
-  swingRightArray(): Int32Array {
-    let table = this._swingRight
-    if (table === null) {
-      const numCorners = this._numCorners
-      const opposite = this._oppositeCorners!
-      table = scratchInt32(numCorners)
-      // Unrolled per face: previous() of a face's corners is [c+2, c, c+1].
-      for (let c = 0; c < numCorners; c += 3) {
-        let o = opposite[c + 2]
-        table[c] = o < 0 ? kInvalidCornerIndex : o % 3 === 0 ? o + 2 : o - 1
-        o = opposite[c]
-        table[c + 1] = o < 0 ? kInvalidCornerIndex : o % 3 === 0 ? o + 2 : o - 1
-        o = opposite[c + 1]
-        table[c + 2] = o < 0 ? kInvalidCornerIndex : o % 3 === 0 ? o + 2 : o - 1
-      }
-      this._swingRight = table
-    }
-    return table
   }
 
   numFaces(): number {
@@ -1390,4 +1236,4 @@ class CornerTable {
   }
 }
 
-export { MeshEdgebreakerDecoderImpl, AttributeData, CornerTable, MeshAttributeIndicesEncodingData }
+export { MeshEdgebreakerDecoderImpl, CornerTable, MeshAttributeIndicesEncodingData }

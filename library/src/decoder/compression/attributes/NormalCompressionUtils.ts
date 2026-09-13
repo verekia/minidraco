@@ -4,19 +4,11 @@
 // Invariants: maxQuantizedValue = 2^q - 1 (odd); maxValue = maxQuantizedValue - 1
 // (even); centerValue = maxValue / 2.
 class OctahedronToolBox {
-  _quantizationBits: number
-  _maxQuantizedValue: number
-  _maxValue: number
-  _dequantizationScale: number
-  _centerValue: number
-
-  constructor() {
-    this._quantizationBits = -1
-    this._maxQuantizedValue = -1
-    this._maxValue = -1
-    this._dequantizationScale = 1.0
-    this._centerValue = -1
-  }
+  _quantizationBits = -1
+  _maxQuantizedValue = -1
+  _maxValue = -1
+  _dequantizationScale = 1.0
+  _centerValue = -1
 
   // q: quantization bits, valid range 2..30.
   setQuantizationBits(q: number): boolean {
@@ -27,10 +19,6 @@ class OctahedronToolBox {
     this._dequantizationScale = Math.fround(2.0 / Math.fround(this._maxValue))
     this._centerValue = (this._maxValue / 2) | 0
     return true
-  }
-
-  isInitialized(): boolean {
-    return this._quantizationBits !== -1
   }
 
   quantizationBits(): number {
@@ -95,43 +83,8 @@ class OctahedronToolBox {
     }
   }
 
-  quantizedOctahedralCoordsToUnitVector(inS: number, inT: number, outVector: Float32Array): void {
-    // float32 throughout (Math.fround) to stay bit-identical to the WASM
-    // decoder, matching the live copy in AttributeOctahedronTransform.js.
-    const fround = Math.fround
-    this._octahedralCoordsToUnitVector(
-      fround(fround(fround(inS) * this._dequantizationScale) - 1.0),
-      fround(fround(fround(inT) * this._dequantizationScale) - 1.0),
-      outVector,
-    )
-  }
-
-  _octahedralCoordsToUnitVector(inSScaled: number, inTScaled: number, outVector: Float32Array): void {
-    // float32 throughout (see quantizedOctahedralCoordsToUnitVector) so normals
-    // are bit-identical to WASM.
-    const fround = Math.fround
-    let y = inSScaled
-    let z = inTScaled
-    const x = fround(fround(1.0 - Math.abs(y)) - Math.abs(z))
-
-    let xOffset = -x
-    if (xOffset < 0) xOffset = 0
-
-    y = fround(y + (y < 0 ? xOffset : -xOffset))
-    z = fround(z + (z < 0 ? xOffset : -xOffset))
-
-    const normSquared = fround(fround(fround(x * x) + fround(y * y)) + fround(z * z))
-    if (normSquared < 1e-6) {
-      outVector[0] = 0
-      outVector[1] = 0
-      outVector[2] = 0
-    } else {
-      const d = fround(1.0 / fround(Math.sqrt(normSquared)))
-      outVector[0] = fround(x * d)
-      outVector[1] = fround(y * d)
-      outVector[2] = fround(z * d)
-    }
-  }
+  // The octahedral -> unit vector direction (quantizedOctahedralCoordsToUnitVector
+  // in the source) lives inlined in AttributeOctahedronTransform.inverseTransformAttribute.
 }
 
 export { OctahedronToolBox }

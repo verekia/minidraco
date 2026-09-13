@@ -1,30 +1,20 @@
 // Ported from draco.js src/compression/entropy/RAnsSymbolDecoder.js (MIT)
 
 import { scratchUint32Zeroed } from '../../core/ScratchArena'
-import { RAnsDecoder } from './ANSCoding'
+import { decodeVarint } from '../../core/VarintDecoding'
+import { ansReadInit, RAnsDecoder } from './ANSCoding'
 
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
 
-// rANS precision for the given unique-symbols bit length, clamped to [12, 20].
-function computeRAnsPrecisionFromUniqueSymbolsBitLength(symbolsBitLength: number): number {
-  const unclamped = Math.trunc((3 * symbolsBitLength) / 2)
-  if (unclamped < 12) return 12
-  if (unclamped > 20) return 20
-  return unclamped
-}
-
 // Decodes symbols using rANS. uniqueSymbolsBitLength must match the encoder's.
 export class RAnsSymbolDecoder {
-  ransPrecisionBits_: number
-  probabilityTable_: Uint32Array | null
-  numSymbols_: number
+  numSymbols_ = 0
   ans_: RAnsDecoder
 
   constructor(uniqueSymbolsBitLength: number) {
-    this.ransPrecisionBits_ = computeRAnsPrecisionFromUniqueSymbolsBitLength(uniqueSymbolsBitLength)
-    this.probabilityTable_ = null
-    this.numSymbols_ = 0
-    this.ans_ = new RAnsDecoder(this.ransPrecisionBits_)
+    // rANS precision for the unique-symbols bit length, clamped to [12, 20].
+    const unclamped = Math.trunc((3 * uniqueSymbolsBitLength) / 2)
+    this.ans_ = new RAnsDecoder(unclamped < 12 ? 12 : unclamped > 20 ? 20 : unclamped)
   }
 
   get numSymbols(): number {
@@ -35,25 +25,19 @@ export class RAnsSymbolDecoder {
   // the number of symbols the caller will decode (lets short streams skip the
   // full lookup table; see RAnsDecoder.ransBuildLookUpTable).
   create(buffer: DecoderBuffer, expectedCount: number = 0x7fffffff): boolean {
-    if (buffer.bitstreamVersion === 0) {
-      return false
-    }
-
-    const val = buffer.decodeVarintUint32()
-    if (val === undefined) return false
-    this.numSymbols_ = val
+    const numSymbols = decodeVarint(buffer)
+    if (numSymbols === undefined) return false
+    this.numSymbols_ = numSymbols
 
     // Reject an unreasonably high symbol count.
-    if (Math.trunc(this.numSymbols_ / 64) > buffer.remainingSize) {
+    if (Math.trunc(numSymbols / 64) > buffer.remainingSize) {
       return false
     }
 
-    const numSymbols = this.numSymbols_
     // Decode-scoped scratch: this table only feeds ransBuildLookUpTable below,
     // and a primitive-heavy file builds thousands of symbol decoders. Zeroed
     // because run-length tokens leave their entries untouched.
     const probabilityTable = scratchUint32Zeroed(numSymbols)
-    this.probabilityTable_ = probabilityTable
     if (numSymbols === 0) {
       return true
     }
@@ -89,15 +73,12 @@ export class RAnsSymbolDecoder {
     }
     buffer.advance(pos - startPos)
 
-    if (!this.ans_.ransBuildLookUpTable(this.probabilityTable_, this.numSymbols_, expectedCount)) {
-      return false
-    }
-    return true
+    return this.ans_.ransBuildLookUpTable(probabilityTable, numSymbols, expectedCount)
   }
 
   // Starts decoding, advancing buffer past the encoded data.
   startDecoding(buffer: DecoderBuffer): boolean {
-    const bytesEncoded = buffer.decodeVarintUint64()
+    const bytesEncoded = decodeVarint(buffer)
     if (bytesEncoded === undefined) return false
 
     if (bytesEncoded > buffer.remainingSize) {
@@ -108,10 +89,7 @@ export class RAnsSymbolDecoder {
     // allocation per symbol decoder (thousands per primitive-heavy GLB).
     const base = buffer.decodedSize
     buffer.advance(Number(bytesEncoded))
-    if (this.ans_.readInit(buffer.data, base + Number(bytesEncoded), base) !== 0) {
-      return false
-    }
-    return true
+    return ansReadInit(this.ans_, buffer.data, base + Number(bytesEncoded), base, this.ans_.lRansBase, 4)
   }
 
   endDecoding(): void {

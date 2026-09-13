@@ -19,50 +19,33 @@ const kMaxPriority = 3
 // bitstream selects MESH_TRAVERSAL_PREDICTION_DEGREE (higher compression
 // levels).
 class MaxPredictionDegreeTraverser {
-  _cornerTable: CornerTable | MeshAttributeCornerTable | null
-  _observer: MeshAttributeIndicesEncodingObserver | null
-  _isFaceVisited: Uint8Array | null
-  _isVertexVisited: Uint8Array | null
-  _numVisitedFaces: number
-  _traversalStacks: number[][] | null
-  _bestPriority: number
-  _predictionDegree: Int32Array | null
-  _cornerToVertex: Int32Array | number[] | null
-  _oppositeCorners: Int32Array | number[] | null
-  _traversalMethodId: number
-  emitsPointIds: boolean
-
-  constructor() {
-    this._cornerTable = null
-    this._observer = null
-    this._isFaceVisited = null
-    this._isVertexVisited = null
-    this._numVisitedFaces = 0
-    // One stack (bucket) per priority level [0, kMaxPriority).
-    this._traversalStacks = null
-    this._bestPriority = 0
-    // Prediction degree accumulated per vertex during traversal.
-    this._predictionDegree = null
-    // Flat connectivity arrays (see DepthFirstTraverser for why).
-    this._cornerToVertex = null
-    this._oppositeCorners = null
-    // Identifies the traversal order for the shared traversal cache
-    // (MESH_TRAVERSAL_PREDICTION_DEGREE). See MeshTraversalSequencer.
-    this._traversalMethodId = 1
-    // Point ids are appended through the observer as vertices are visited.
-    this.emitsPointIds = true
-  }
+  _cornerTable: CornerTable | MeshAttributeCornerTable | null = null
+  _observer: MeshAttributeIndicesEncodingObserver | null = null
+  _isFaceVisited: Uint8Array | null = null
+  _isVertexVisited: Uint8Array | null = null
+  _numVisitedFaces = 0
+  // One stack (bucket) per priority level [0, kMaxPriority).
+  _traversalStacks: number[][] | null = null
+  _bestPriority = 0
+  // Prediction degree accumulated per vertex during traversal.
+  _predictionDegree: Int32Array | null = null
+  // Flat connectivity arrays (see DepthFirstTraverser for why).
+  _cornerToVertex: Int32Array | number[] | null = null
+  _oppositeCorners: Int32Array | number[] | null = null
+  // Identifies the traversal order for the shared traversal cache
+  // (MESH_TRAVERSAL_PREDICTION_DEGREE). See MeshTraversalSequencer.
+  _traversalMethodId = 1
+  // Point ids are appended through the observer as vertices are visited.
+  emitsPointIds = true
 
   init(cornerTable: CornerTable | MeshAttributeCornerTable, observer: MeshAttributeIndicesEncodingObserver): void {
     this._cornerTable = cornerTable
     this._observer = observer
     this._isFaceVisited = new Uint8Array(cornerTable.numFaces())
     this._isVertexVisited = new Uint8Array(cornerTable.numVertices())
-    this._numVisitedFaces = 0
     this._cornerToVertex = cornerTable.cornerToVertexArray()
     this._oppositeCorners = cornerTable.oppositeCornerArray()
     this._traversalStacks = [[], [], []] // kMaxPriority buckets
-    this._bestPriority = 0
   }
 
   cornerTable(): CornerTable | MeshAttributeCornerTable | null {
@@ -80,8 +63,6 @@ class MaxPredictionDegreeTraverser {
   onTraversalStart(): void {
     this._predictionDegree = new Int32Array(this._cornerTable!.numVertices())
   }
-
-  onTraversalEnd(): void {}
 
   // Same contract as DepthFirstTraverser.traverseAll. Seeds every face
   // through traverseFromCorner (which re-checks the first face's vertices),

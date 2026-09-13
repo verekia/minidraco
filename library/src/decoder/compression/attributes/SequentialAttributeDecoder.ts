@@ -9,18 +9,11 @@ import type { PredictionSchemeDecoderInterface } from './prediction_schemes/Pred
 // A base class for decoding attribute values encoded by the
 // SequentialAttributeEncoder.
 class SequentialAttributeDecoder {
-  _decoder: PointCloudDecoder | null
-  _attribute: PointAttribute | null
-  _attributeId: number
+  _decoder: PointCloudDecoder | null = null
+  _attribute: PointAttribute | null = null
+  _attributeId = -1
   // Decoded portable attribute (after lossless decoding).
-  _portableAttribute: PointAttribute | null
-
-  constructor() {
-    this._decoder = null
-    this._attribute = null
-    this._attributeId = -1
-    this._portableAttribute = null
-  }
+  _portableAttribute: PointAttribute | null = null
 
   init(decoder: PointCloudDecoder, attributeId: number): boolean {
     this._decoder = decoder
@@ -29,16 +22,22 @@ class SequentialAttributeDecoder {
     return true
   }
 
-  // --- Optional two-phase decode ---
+  // --- Two-phase decode ---
   // The controller calls Parse for every attribute first (headers, schemes,
   // prediction data -- all size-driven cursor movement), collects the pending
   // rANS symbol streams, decodes them in pairs (see ransDecodeSymbolsPair),
   // then calls Finish per attribute in order. Decoders without a deferrable
-  // stream simply do the whole decode in Parse. Defaults preserve the
-  // original single-phase behavior.
+  // stream simply do the whole decode in Parse (decodeValues); the defaults
+  // below are theirs.
 
   decodePortableAttributeParse(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    return this.decodePortableAttribute(pointIds, buffer)
+    if (this._attribute!.numComponents <= 0) {
+      return false
+    }
+    if (!this._attribute!.reset(pointIds.length)) {
+      return false
+    }
+    return this.decodeValues(pointIds, buffer)
   }
 
   pendingSymbolStream(): PendingSymbolStream | null {
@@ -47,16 +46,6 @@ class SequentialAttributeDecoder {
 
   decodePortableAttributeFinish(): boolean {
     return true
-  }
-
-  decodePortableAttribute(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    if (this._attribute!.numComponents <= 0) {
-      return false
-    }
-    if (!this._attribute!.reset(pointIds.length)) {
-      return false
-    }
-    return this.decodeValues(pointIds, buffer)
   }
 
   // No-op by default; subclasses with a transform override this.
@@ -127,14 +116,6 @@ class SequentialAttributeDecoder {
     }
     this._attribute!.buffer!.write(0, valueData, totalSize)
     return true
-  }
-
-  setPortableAttribute(att: PointAttribute): void {
-    this._portableAttribute = att
-  }
-
-  get portableAttribute(): PointAttribute | null {
-    return this._portableAttribute
   }
 }
 

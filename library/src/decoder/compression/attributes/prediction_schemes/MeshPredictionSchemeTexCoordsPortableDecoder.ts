@@ -18,38 +18,28 @@ const GEOMETRY_ATTRIBUTE_POSITION = 0
 class MeshPredictionSchemeTexCoordsPortableDecoder extends MeshPredictionSchemeDecoder {
   _predictor: MeshPredictionSchemeTexCoordsPortablePredictor
 
-  constructor(
-    attribute: PointAttribute,
-    transform: PredictionSchemeDecodingTransform,
-    meshData: MeshPredictionSchemeData,
-  ) {
-    super(attribute, transform, meshData)
+  constructor(transform: PredictionSchemeDecodingTransform, meshData: MeshPredictionSchemeData) {
+    super(transform, meshData)
     this._predictor = new MeshPredictionSchemeTexCoordsPortablePredictor(meshData)
-  }
-
-  override isInitialized(): boolean {
-    if (!this._predictor.isInitialized()) return false
-    if (!this._meshData.isInitialized()) return false
-    return true
   }
 
   override getNumParentAttributes(): number {
     return 1
   }
 
-  override getParentAttributeType(i: number): number {
+  override getParentAttributeType(_i: number): number {
     return GEOMETRY_ATTRIBUTE_POSITION
   }
 
   override setParentAttribute(att: PointAttribute): boolean {
-    if (!att || att.attributeType !== GEOMETRY_ATTRIBUTE_POSITION) return false
+    if (att.attributeType !== GEOMETRY_ATTRIBUTE_POSITION) return false
     if (att.numComponents !== 3) return false
     this._predictor.setPositionAttribute(att)
     return true
   }
 
   override decodePredictionData(buffer: DecoderBuffer): boolean {
-    let numOrientations = buffer.decodeInt32()
+    const numOrientations = buffer.decodeInt32()
     if (numOrientations === undefined || numOrientations < 0) return false
 
     this._predictor.resizeOrientations(numOrientations)
@@ -69,11 +59,12 @@ class MeshPredictionSchemeTexCoordsPortableDecoder extends MeshPredictionSchemeD
   override computeOriginalValues(
     inCorr: Int32Array,
     outData: Int32Array,
-    size: number,
+    _size: number,
     numComponents: number,
     entryToPointIdMap: Int32Array,
   ): boolean {
-    if (numComponents !== MeshPredictionSchemeTexCoordsPortablePredictor.NUM_COMPONENTS) {
+    // The portable predictor only handles 2-component UVs.
+    if (numComponents !== 2) {
       return false
     }
     this._predictor.setEntryToPointIdMap(entryToPointIdMap)

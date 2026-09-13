@@ -18,6 +18,7 @@
     "format:check": "oxfmt --check .",
     "test": "bun test",
     "bench": "bun run library/scripts/bench.ts",
+    "sizes": "bun run --filter 'minidraco' build && bun run library/scripts/sizes.ts",
     "warden": "warden",
     "all": "bun run format:check && bun run lint && bun run typecheck && bun run warden && bun run test",
     "prepare": "husky",

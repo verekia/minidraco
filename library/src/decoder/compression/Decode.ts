@@ -4,24 +4,9 @@ import { DecoderBuffer } from '../core/DecoderBuffer'
 import { releaseScratch } from '../core/ScratchArena'
 import { Mesh } from '../mesh/Mesh'
 import { EncodedGeometryType, MeshEncoderMethod, DracoHeader } from './config/CompressionShared'
-import { DecoderOptions } from './config/DecoderOptions'
 import { MeshEdgebreakerDecoder } from './mesh/MeshEdgebreakerDecoder'
 import { MeshSequentialDecoder } from './mesh/MeshSequentialDecoder'
 import { PointCloudDecoder } from './point_cloud/PointCloudDecoder'
-
-// Reads the Draco header from a copy of inBuffer without advancing the original,
-// so the geometry type can be checked before picking a decoder.
-// Returns { ok, header, message }.
-function peekHeader(inBuffer: DecoderBuffer): { ok: boolean; header: DracoHeader; message: string } {
-  const tempBuffer = new DecoderBuffer()
-  tempBuffer.init(inBuffer.data!, inBuffer.data!.length)
-  tempBuffer.bitstreamVersion = inBuffer.bitstreamVersion
-  tempBuffer.advance(inBuffer.decodedSize) // match the original's position
-
-  const header = new DracoHeader()
-  const status = PointCloudDecoder.decodeHeader(tempBuffer, header)
-  return { ok: status.ok(), header, message: status.errorMsg }
-}
 
 function createMeshDecoder(method: number): MeshSequentialDecoder | MeshEdgebreakerDecoder {
   if (method === MeshEncoderMethod.MESH_SEQUENTIAL_ENCODING) {
@@ -33,69 +18,34 @@ function createMeshDecoder(method: number): MeshSequentialDecoder | MeshEdgebrea
   throw new Error('Unsupported mesh encoding method.')
 }
 
-// Decodes Draco-compressed meshes and point clouds.
+// Decodes Draco-compressed meshes.
 class Decoder {
-  options_: DecoderOptions
-
-  constructor() {
-    this.options_ = new DecoderOptions()
-  }
-
-  // Returns an EncodedGeometryType value, or INVALID_GEOMETRY_TYPE on error.
-  static getEncodedGeometryType(inBuffer: DecoderBuffer): number {
-    const result = peekHeader(inBuffer)
-    if (!result.ok) {
-      return EncodedGeometryType.INVALID_GEOMETRY_TYPE
-    }
-
-    if (result.header.encoderType >= EncodedGeometryType.NUM_ENCODED_GEOMETRY_TYPES) {
-      return EncodedGeometryType.INVALID_GEOMETRY_TYPE
-    }
-
-    return result.header.encoderType
-  }
-
   // Returns { mesh, ok, message }.
   decodeMeshFromBuffer(inBuffer: DecoderBuffer): { mesh: Mesh | null; ok: boolean; message: string } {
-    const mesh = new Mesh()
-    const status = this.decodeBufferToMesh(inBuffer, mesh)
-    if (!status.ok) {
-      return { mesh: null, ok: false, message: status.message }
+    const header = new DracoHeader()
+    const headerError = PointCloudDecoder.decodeHeader(inBuffer, header)
+    if (headerError !== '') {
+      return { mesh: null, ok: false, message: headerError }
     }
-
-    return { mesh, ok: true, message: '' }
-  }
-
-  // Returns { ok, message }.
-  decodeBufferToMesh(inBuffer: DecoderBuffer, outGeometry: Mesh): { ok: boolean; message: string } {
-    const result = peekHeader(inBuffer)
-    if (!result.ok) {
-      return { ok: false, message: result.message }
-    }
-
-    if (result.header.encoderType !== EncodedGeometryType.TRIANGULAR_MESH) {
-      return { ok: false, message: 'Input is not a mesh.' }
+    if (header.encoderType !== EncodedGeometryType.TRIANGULAR_MESH) {
+      return { mesh: null, ok: false, message: 'Input is not a Draco triangular mesh.' }
     }
 
     try {
-      const decoder = createMeshDecoder(result.header.encoderMethod)
-      const status = decoder.decodeMesh(this.options_, inBuffer, outGeometry)
-      return { ok: status.ok(), message: status.errorMsg }
+      const mesh = new Mesh()
+      const message = createMeshDecoder(header.encoderMethod).decodeMesh(header, inBuffer, mesh)
+      return message === '' ? { mesh, ok: true, message } : { mesh: null, ok: false, message }
     } catch (error) {
       // Safety net for hostile input: a malformed header can declare a size
       // that drives an oversized typed-array allocation (RangeError), or hit an
       // unsupported encoding — convert any throw into a clean decode failure
       // instead of letting it escape as an uncaught exception.
-      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+      return { mesh: null, ok: false, message: error instanceof Error ? error.message : String(error) }
     } finally {
       // The result mesh only references attribute buffers and faces_, never
       // scratch — everything borrowed during the decode goes back to the pool.
       releaseScratch()
     }
-  }
-
-  options(): DecoderOptions {
-    return this.options_
   }
 }
 

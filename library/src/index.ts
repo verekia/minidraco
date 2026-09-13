@@ -16,8 +16,7 @@ export const decodeDracoMesh = (data: Uint8Array): Mesh => {
   const result = decoder.decodeMeshFromBuffer(buffer)
 
   if (!result.ok || result.mesh === null) {
-    const message = result.message === 'Input is not a mesh.' ? 'Input is not a Draco triangular mesh.' : result.message
-    throw new Error(`minidraco: ${message}`)
+    throw new Error(`minidraco: ${result.message}`)
   }
 
   return result.mesh

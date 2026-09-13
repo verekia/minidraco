@@ -1,8 +1,8 @@
 # 🐲 minidraco
 
 A fast, pure-TypeScript [Draco](https://google.github.io/draco/) mesh decoder with a drop-in
-`DRACOLoader` for [Three.js](https://threejs.org/) — no wasm to host or fetch, and a worker pool
-so decoding never blocks the main thread.
+`DRACOLoader` for [Three.js](https://threejs.org/) — no wasm to host or fetch, and an optional
+worker pool so decoding never blocks the main thread.
 
 ## Usage
 
@@ -15,12 +15,12 @@ gltfLoader.setDRACOLoader(new MinidracoLoader())
 gltfLoader.load('model.glb', gltf => scene.add(gltf.scene))
 ```
 
-A drop-in for `THREE.DRACOLoader`, no cast needed. Decoding runs in a worker pool by default, with
-a main-thread fallback. Options:
+A drop-in for `THREE.DRACOLoader`, no cast needed. Decoding runs on the main thread by default;
+opt into a worker pool (with a main-thread fallback) to keep it free:
 
 ```ts
-new MinidracoLoader({ workers: false }) // decode on the main thread
-new MinidracoLoader({ workerLimit: 8 }) // pool size (default 4)
+new MinidracoLoader({ workers: true }) // decode in a pool of 4 workers
+new MinidracoLoader({ workerLimit: 8 }) // pool of 8
 ```
 
 Or decode a raw bitstream without Three.js:
@@ -45,23 +45,30 @@ Median across an 18-model corpus vs [draco.js](https://github.com/mrdoob/draco.j
 
 | benchmark                                          | vs draco.js     | vs draco3d wasm |
 | -------------------------------------------------- | --------------- | --------------- |
-| single-threaded decode — bun (JSC)                 | 🟢 1.37× faster | 🟢 1.46× faster |
-| single-threaded decode — Chrome (V8)               | 🟢 1.35× faster | 🟢 1.19× faster |
-| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.48× faster | 🟢 1.04× faster |
-| `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.33× faster | 🟢 1.17× faster |
+| single-threaded decode — bun (JSC)                 | 🟢 1.37× faster | 🟢 1.49× faster |
+| single-threaded decode — Chrome (V8)               | 🟢 1.41× faster | 🟢 1.26× faster |
+| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.45× faster | 🟢 1.03× faster |
+| `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.37× faster | 🟢 1.23× faster |
 
 Faster than draco.js across the corpus, ahead of the wasm decoder single-threaded, and level with
-it in a real `GLTFLoader.parse` with the main thread left free — warm, and level to ahead on the
-first load of a session (cold numbers swing run to run), where minidraco's worker pool is still
-JIT-warming while the wasm decoder is fetching and compiling its module (no `draco_decoder.wasm`
-to host or download here).
+it in a real `GLTFLoader.parse` with `workers: true` and the main thread left free — warm, and
+level to ahead on the first load of a session (cold numbers swing run to run), where minidraco's
+worker pool is still JIT-warming while the wasm decoder is fetching and compiling its module (no
+`draco_decoder.wasm` to host or download here).
 
 ## Download size
 
-Over the wire (brotli): **~23 KB** ships in your app bundle. With the worker pool on (default) the
-browser also fetches a **~22 KB** worker chunk on the first decode — **~45 KB** total; `workers: false`
-skips that fetch. **draco.js ~22 KB**, **draco3d wasm ~76 KB** — the wasm is a separate file you
-must host, while the JS decoders ship inside your bundle.
+Minified + brotli, vs the same two decoders (regenerate with `bun run sizes`):
+
+| download (brotli)             | minidraco | vs draco.js      | vs draco3d wasm         |
+| ----------------------------- | --------- | ---------------- | ----------------------- |
+| single-threaded (default)     | 22 KB     | ⚪ even (22 KB)  | 🟢 3.7× smaller (81 KB) |
+| worker pool (`workers: true`) | 45 KB     | 🟢 not supported | 🟢 1.8× smaller (81 KB) |
+
+With `workers: true` the browser also fetches the pool module and a worker chunk holding a second
+copy of the decoder on the first decode. draco.js has no worker pool. The wasm path ships three's
+`DRACOLoader` in your bundle and fetches the wrapper and `draco_decoder.wasm`, which you must
+host, before the first decode.
 
 ## Monorepo
 

@@ -8,17 +8,10 @@ import type { DecoderBuffer } from '../../../core/DecoderBuffer'
 // correction wrapped into the data range; decoding adds it to the prediction
 // and wraps the result back into [min, max].
 class PredictionSchemeWrapDecodingTransform {
-  _numComponents: number
-  _minValue: number
-  _maxValue: number
-  _maxDif: number
-
-  constructor() {
-    this._numComponents = 0
-    this._minValue = 0
-    this._maxValue = 0
-    this._maxDif = 0
-  }
+  _numComponents = 0
+  _minValue = 0
+  _maxValue = 0
+  _maxDif = 0
 
   getType(): number {
     return PredictionSchemeTransformType.PREDICTION_TRANSFORM_WRAP
@@ -67,18 +60,14 @@ class PredictionSchemeWrapDecodingTransform {
     if (minValue === undefined) return false
     const maxValue = buffer.decodeInt32()
     if (maxValue === undefined) return false
-    if (minValue > maxValue) return false
+
+    // The range is computed at full precision (C++ int64), so it must fit the
+    // int32 data type.
+    const dif = maxValue - minValue
+    if (dif < 0 || dif >= 0x7fffffff) return false
 
     this._minValue = minValue
     this._maxValue = maxValue
-    return this._initCorrectionBounds()
-  }
-
-  _initCorrectionBounds(): boolean {
-    const dif = this._maxValue - this._minValue
-    if (dif < 0 || dif >= 0x7fffffff) {
-      return false
-    }
     this._maxDif = 1 + dif
     return true
   }

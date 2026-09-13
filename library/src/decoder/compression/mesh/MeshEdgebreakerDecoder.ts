@@ -11,49 +11,35 @@ import type { MeshAttributeCornerTable } from '../../mesh/MeshAttributeCornerTab
 import type { CornerTable, MeshAttributeIndicesEncodingData } from './MeshEdgebreakerDecoderImpl'
 
 class MeshEdgebreakerDecoder extends MeshDecoder {
-  _impl: MeshEdgebreakerDecoderImpl | null
-
-  constructor() {
-    super()
-    this._impl = null
-  }
+  // Set by initializeDecoder(), which runs before anything below is reached.
+  _impl: MeshEdgebreakerDecoderImpl | null = null
 
   override getCornerTable(): CornerTable | null {
-    return this._impl ? this._impl.getCornerTable() : null
+    return this._impl!.getCornerTable()
   }
 
   override getAttributeCornerTable(attId: number): MeshAttributeCornerTable | null {
-    return this._impl ? this._impl.getAttributeCornerTable(attId) : null
+    return this._impl!.getAttributeCornerTable(attId)
   }
 
   override getAttributeEncodingData(attId: number): MeshAttributeIndicesEncodingData | null {
-    return this._impl ? this._impl.getAttributeEncodingData(attId) : null
+    return this._impl!.getAttributeEncodingData(attId)
   }
 
   override initializeDecoder(): boolean {
     const traversalDecoderType = this.buffer()!.decodeUint8()
-    if (traversalDecoderType === undefined) {
+    const TraversalDecoderClass =
+      traversalDecoderType === MeshEdgebreakerConnectivityEncodingMethod.MESH_EDGEBREAKER_STANDARD_ENCODING
+        ? MeshEdgebreakerTraversalDecoder
+        : traversalDecoderType === MeshEdgebreakerConnectivityEncodingMethod.MESH_EDGEBREAKER_PREDICTIVE_ENCODING
+          ? MeshEdgebreakerTraversalPredictiveDecoder
+          : traversalDecoderType === MeshEdgebreakerConnectivityEncodingMethod.MESH_EDGEBREAKER_VALENCE_ENCODING
+            ? MeshEdgebreakerTraversalValenceDecoder
+            : null
+    if (TraversalDecoderClass === null) {
       return false
     }
-
-    this._impl = null
-
-    if (traversalDecoderType === MeshEdgebreakerConnectivityEncodingMethod.MESH_EDGEBREAKER_STANDARD_ENCODING) {
-      this._impl = new MeshEdgebreakerDecoderImpl(MeshEdgebreakerTraversalDecoder)
-    } else if (
-      traversalDecoderType === MeshEdgebreakerConnectivityEncodingMethod.MESH_EDGEBREAKER_PREDICTIVE_ENCODING
-    ) {
-      this._impl = new MeshEdgebreakerDecoderImpl(MeshEdgebreakerTraversalPredictiveDecoder)
-    } else if (traversalDecoderType === MeshEdgebreakerConnectivityEncodingMethod.MESH_EDGEBREAKER_VALENCE_ENCODING) {
-      this._impl = new MeshEdgebreakerDecoderImpl(MeshEdgebreakerTraversalValenceDecoder)
-    }
-
-    if (!this._impl) {
-      return false
-    }
-    if (!this._impl.init(this)) {
-      return false
-    }
+    this._impl = new MeshEdgebreakerDecoderImpl(this, TraversalDecoderClass)
     return true
   }
 
@@ -63,10 +49,6 @@ class MeshEdgebreakerDecoder extends MeshDecoder {
 
   override decodeConnectivity(): boolean {
     return this._impl!.decodeConnectivity()
-  }
-
-  override onAttributesDecoded(): boolean {
-    return this._impl!.onAttributesDecoded()
   }
 }
 

@@ -1,17 +1,7 @@
 // Ported from draco.js src/compression/point_cloud/PointCloudDecoder.js (MIT)
 
-import { Status, StatusCode, okStatus } from '../../core/Status'
 import { MetadataDecoder } from '../../metadata/MetadataDecoder'
-import {
-  DracoHeader,
-  EncodedGeometryType,
-  DRACO_BITSTREAM_VERSION,
-  METADATA_FLAG_MASK,
-  kDracoPointCloudBitstreamVersionMajor,
-  kDracoPointCloudBitstreamVersionMinor,
-  kDracoMeshBitstreamVersionMajor,
-  kDracoMeshBitstreamVersionMinor,
-} from '../config/CompressionShared'
+import { METADATA_FLAG_MASK } from '../config/CompressionShared'
 import { ransDecodeSymbolsPair } from '../entropy/ANSCoding'
 
 import type { PointAttribute } from '../../attributes/PointAttribute'
@@ -19,145 +9,76 @@ import type { DecoderBuffer } from '../../core/DecoderBuffer'
 import type { PointCloud } from '../../point_cloud/PointCloud'
 import type { AttributesDecoderInterface } from '../attributes/AttributesDecoderInterface'
 import type { PendingSymbolStream } from '../attributes/SequentialAttributeDecoder'
-import type { DecoderOptions } from '../config/DecoderOptions'
+import type { DracoHeader } from '../config/CompressionShared'
 
-// Abstract base for all point cloud and mesh decoders; holds shared logic.
+// Abstract base for the mesh decoders; holds shared logic. (No point cloud
+// decoder is instantiated: Decode.ts only accepts triangular meshes.)
 class PointCloudDecoder {
-  _pointCloud: PointCloud | null
-  _buffer: DecoderBuffer | null
-  _versionMajor: number
-  _versionMinor: number
-  _options: DecoderOptions | null
-  _attributesDecoders: (AttributesDecoderInterface | null)[]
-  _attributeToDecoderMap: number[]
+  _pointCloud: PointCloud | null = null
+  _buffer: DecoderBuffer | null = null
+  _attributesDecoders: (AttributesDecoderInterface | null)[] = []
+  _attributeToDecoderMap: number[] = []
 
-  constructor() {
-    this._pointCloud = null
-    this._buffer = null
-    this._versionMajor = 0
-    this._versionMinor = 0
-    this._options = null
-    this._attributesDecoders = []
-    this._attributeToDecoderMap = []
-  }
-
-  getGeometryType(): number {
-    return EncodedGeometryType.POINT_CLOUD
-  }
-
-  // Returns a Status; on success outHeader is populated.
-  static decodeHeader(buffer: DecoderBuffer, outHeader: DracoHeader): Status {
+  // Returns an error message, or '' on success (outHeader is then populated).
+  static decodeHeader(buffer: DecoderBuffer, outHeader: DracoHeader): string {
     const kIoErrorMsg = 'Failed to parse Draco header.'
     const bytes = buffer.decodeBytes(5)
     if (bytes === undefined) {
-      return new Status(StatusCode.IO_ERROR, kIoErrorMsg)
-    }
-    for (let i = 0; i < 5; i++) {
-      outHeader.dracoString[i] = bytes[i]
+      return kIoErrorMsg
     }
     const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4])
     if (magic !== 'DRACO') {
-      return new Status(StatusCode.DRACO_ERROR, 'Not a Draco file.')
+      return 'Not a Draco file.'
     }
     const versionMajor = buffer.decodeUint8()
-    if (versionMajor === undefined) {
-      return new Status(StatusCode.IO_ERROR, kIoErrorMsg)
+    const versionMinor = buffer.decodeUint8()
+    const encoderType = buffer.decodeUint8()
+    const encoderMethod = buffer.decodeUint8()
+    const flags = buffer.decodeUint16()
+    if (
+      versionMajor === undefined ||
+      versionMinor === undefined ||
+      encoderType === undefined ||
+      encoderMethod === undefined ||
+      flags === undefined
+    ) {
+      return kIoErrorMsg
     }
     outHeader.versionMajor = versionMajor
-    const versionMinor = buffer.decodeUint8()
-    if (versionMinor === undefined) {
-      return new Status(StatusCode.IO_ERROR, kIoErrorMsg)
-    }
     outHeader.versionMinor = versionMinor
-    const encoderType = buffer.decodeUint8()
-    if (encoderType === undefined) {
-      return new Status(StatusCode.IO_ERROR, kIoErrorMsg)
-    }
     outHeader.encoderType = encoderType
-    const encoderMethod = buffer.decodeUint8()
-    if (encoderMethod === undefined) {
-      return new Status(StatusCode.IO_ERROR, kIoErrorMsg)
-    }
     outHeader.encoderMethod = encoderMethod
-    const flags = buffer.decodeUint16()
-    if (flags === undefined) {
-      return new Status(StatusCode.IO_ERROR, kIoErrorMsg)
-    }
     outHeader.flags = flags
-    return okStatus()
+    return ''
   }
 
-  // Main entry point for point cloud decoding.
-  decode(options: DecoderOptions, inBuffer: DecoderBuffer, outPointCloud: PointCloud): Status {
-    this._options = options
+  // Main entry point, given the already-parsed header (see Decode.ts).
+  decode(header: DracoHeader, inBuffer: DecoderBuffer, outPointCloud: PointCloud): string {
     this._buffer = inBuffer
     this._pointCloud = outPointCloud
 
-    const header = new DracoHeader()
-    const headerStatus = PointCloudDecoder.decodeHeader(this._buffer, header)
-    if (!headerStatus.ok()) {
-      return headerStatus
-    }
-
-    if (header.encoderType !== this.getGeometryType()) {
-      return new Status(StatusCode.DRACO_ERROR, 'Using incompatible decoder for the input geometry.')
-    }
-
-    this._versionMajor = header.versionMajor
-    this._versionMinor = header.versionMinor
-
-    const maxSupportedMajorVersion =
-      header.encoderType === EncodedGeometryType.POINT_CLOUD
-        ? kDracoPointCloudBitstreamVersionMajor
-        : kDracoMeshBitstreamVersionMajor
-    const maxSupportedMinorVersion =
-      header.encoderType === EncodedGeometryType.POINT_CLOUD
-        ? kDracoPointCloudBitstreamVersionMinor
-        : kDracoMeshBitstreamVersionMinor
-
-    // Version compatibility check.
-    if (this._versionMajor < 1 || this._versionMajor > maxSupportedMajorVersion) {
-      return new Status(StatusCode.UNKNOWN_VERSION, 'Unknown major version.')
-    }
-    if (this._versionMajor === maxSupportedMajorVersion && this._versionMinor > maxSupportedMinorVersion) {
-      return new Status(StatusCode.UNKNOWN_VERSION, 'Unknown minor version.')
-    }
-
-    this._buffer.bitstreamVersion = DRACO_BITSTREAM_VERSION(this._versionMajor, this._versionMinor)
-
     // Only the current Draco 2.2 mesh bitstream is supported; pre-2.2 decode
     // paths were removed, so older meshes are rejected rather than mis-decoded.
-    if (
-      header.encoderType === EncodedGeometryType.TRIANGULAR_MESH &&
-      this._buffer.bitstreamVersion < DRACO_BITSTREAM_VERSION(2, 2)
-    ) {
-      return new Status(
-        StatusCode.UNKNOWN_VERSION,
-        'Unsupported bitstream version (only Draco 2.2 meshes are supported).',
-      )
+    if (header.versionMajor !== 2 || header.versionMinor !== 2) {
+      return 'Unsupported bitstream version (Draco 2.2 meshes only).'
     }
 
-    if (header.flags & METADATA_FLAG_MASK) {
-      const metadataStatus = this._decodeMetadata()
-      if (!metadataStatus.ok()) {
-        return metadataStatus
-      }
+    // Skip (not surface) the geometry metadata so its bytes are consumed and the
+    // bitstream stays aligned; otherwise a metadata-bearing file decodes to empty.
+    if (header.flags & METADATA_FLAG_MASK && !new MetadataDecoder(this._buffer).skipGeometryMetadata()) {
+      return 'Failed to decode metadata.'
     }
 
     if (!this.initializeDecoder()) {
-      return new Status(StatusCode.DRACO_ERROR, 'Failed to initialize the decoder.')
+      return 'Failed to initialize the decoder.'
     }
     if (!this.decodeGeometryData()) {
-      return new Status(StatusCode.DRACO_ERROR, 'Failed to decode geometry data.')
+      return 'Failed to decode geometry data.'
     }
     if (!this.decodePointAttributes()) {
-      return new Status(StatusCode.DRACO_ERROR, 'Failed to decode point attributes.')
+      return 'Failed to decode point attributes.'
     }
-    return okStatus()
-  }
-
-  bitstreamVersion(): number {
-    return DRACO_BITSTREAM_VERSION(this._versionMajor, this._versionMinor)
+    return ''
   }
 
   setAttributesDecoder(attDecoderId: number, decoder: AttributesDecoderInterface): boolean {
@@ -193,10 +114,6 @@ class PointCloudDecoder {
 
   buffer(): DecoderBuffer | null {
     return this._buffer
-  }
-
-  options(): DecoderOptions | null {
-    return this._options
   }
 
   // -- Protected virtual methods (override in subclasses) --
@@ -245,13 +162,7 @@ class PointCloudDecoder {
         this._attributeToDecoderMap[attId] = i
       }
     }
-    if (!this.decodeAllAttributes()) {
-      return false
-    }
-    if (!this.onAttributesDecoded()) {
-      return false
-    }
-    return true
+    return this.decodeAllAttributes()
   }
 
   decodeAllAttributes(): boolean {
@@ -296,20 +207,6 @@ class PointCloudDecoder {
       }
     }
     return true
-  }
-
-  onAttributesDecoded(): boolean {
-    return true
-  }
-
-  _decodeMetadata(): Status {
-    // Skip (not surface) the geometry metadata so its bytes are consumed and the
-    // bitstream stays aligned; otherwise a metadata-bearing file decodes to empty.
-    const metadataDecoder = new MetadataDecoder()
-    if (!metadataDecoder.skipGeometryMetadata(this._buffer!)) {
-      return new Status(StatusCode.DRACO_ERROR, 'Failed to decode metadata.')
-    }
-    return okStatus()
   }
 }
 

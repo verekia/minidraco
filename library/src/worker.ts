@@ -2,7 +2,7 @@
 // (no imports) by tsup, so it can be spawned as a module worker via
 // `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })`
 // from the library dist, or inlined into an app bundle by webpack/turbopack.
-import { decodeDracoMesh } from './index'
+import { decodeDracoMesh, GeometryAttributeType } from './index'
 
 interface DecodeTask {
   id: number
@@ -35,15 +35,9 @@ const typedArrayMap: Record<string, new (length: number) => any> = {
   Uint32Array,
 }
 
-// Draco GeometryAttribute type ids (POSITION..GENERIC), matching
-// GeometryAttributeType in the decoder.
-const attributeTypeMap: Record<string, number> = {
-  POSITION: 0,
-  NORMAL: 1,
-  COLOR: 2,
-  TEX_COORD: 3,
-  GENERIC: 4,
-}
+// Named attribute ids (POSITION..GENERIC) looked up by the string the caller
+// passes in attributeIDs.
+const attributeTypeMap: Record<string, number | undefined> = GeometryAttributeType
 
 // --- JIT warmup -------------------------------------------------------------
 // A fresh worker runs the decoder in the engine's interpreter/baseline tier;

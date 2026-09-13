@@ -1,27 +1,16 @@
 // Ported from draco.js src/core/DecoderBuffer.js (MIT)
 
-import { bitstreamVersion } from './Macros'
 import { decodeVarint } from './VarintDecoding'
 
 export class BitDecoder {
-  _bitBuffer: Uint8Array | null
-  _bitOffset: number
-  _byteLength: number
-
-  constructor() {
-    this._bitBuffer = null
-    this._bitOffset = 0
-    this._byteLength = 0
-  }
+  _bitBuffer: Uint8Array | null = null
+  _bitOffset = 0
+  _byteLength = 0
 
   reset(uint8Array: Uint8Array, byteLength: number): void {
     this._bitBuffer = uint8Array
     this._byteLength = byteLength
     this._bitOffset = 0
-  }
-
-  bitsDecoded(): number {
-    return this._bitOffset
   }
 
   getBits(nbits: number): number | undefined {
@@ -71,38 +60,18 @@ export class BitDecoder {
 }
 
 export class DecoderBuffer {
-  _data: Uint8Array | null
-  _dataView: DataView | null
-  _dataSize: number
-  _pos: number
-  _bitDecoder: BitDecoder
-  _bitMode: boolean
-  _bitstreamVersion: number
+  _data: Uint8Array | null = null
+  _dataView: DataView | null = null
+  _dataSize = 0
+  _pos = 0
+  _bitDecoder = new BitDecoder()
+  _bitMode = false
 
-  constructor() {
-    this._data = null
-    this._dataView = null
-    this._dataSize = 0
+  init(data: Uint8Array, dataSize = data.length): void {
+    this._data = data
+    this._dataView = new DataView(data.buffer, data.byteOffset, data.byteLength)
+    this._dataSize = dataSize
     this._pos = 0
-    this._bitDecoder = new BitDecoder()
-    this._bitMode = false
-    this._bitstreamVersion = 0
-  }
-
-  init(data: ArrayBuffer | Uint8Array | ArrayLike<number>, dataSize?: number, version?: number): void {
-    if (data instanceof ArrayBuffer) {
-      this._data = new Uint8Array(data)
-    } else if (data instanceof Uint8Array) {
-      this._data = data
-    } else {
-      this._data = new Uint8Array(data)
-    }
-    this._dataView = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength)
-    this._dataSize = dataSize !== undefined ? dataSize : this._data.length
-    this._pos = 0
-    if (version !== undefined) {
-      this._bitstreamVersion = version
-    }
   }
 
   // Typed little-endian reads.
@@ -127,13 +96,6 @@ export class DecoderBuffer {
     return val
   }
 
-  decodeUint32(): number | undefined {
-    if (this._pos + 4 > this._dataSize) return undefined
-    const val = this._dataView!.getUint32(this._pos, true)
-    this._pos += 4
-    return val
-  }
-
   decodeInt32(): number | undefined {
     if (this._pos + 4 > this._dataSize) return undefined
     const val = this._dataView!.getInt32(this._pos, true)
@@ -146,15 +108,6 @@ export class DecoderBuffer {
     const val = this._dataView!.getFloat32(this._pos, true)
     this._pos += 4
     return val
-  }
-
-  decodeUint64(): number | undefined {
-    if (this._pos + 8 > this._dataSize) return undefined
-    const lo = this._dataView!.getUint32(this._pos, true)
-    const hi = this._dataView!.getUint32(this._pos + 4, true)
-    this._pos += 8
-    // BigInt-free number, safe up to 2^53.
-    return hi * 0x100000000 + lo
   }
 
   decodeBytes(size: number): Uint8Array | undefined {
@@ -173,16 +126,14 @@ export class DecoderBuffer {
     return result
   }
 
+  // Only the 2.2+ layout (varint size prefix): older bitstreams are rejected
+  // before any bit decoding starts.
   startBitDecoding(decodeSize: boolean): number | undefined {
-    let outSize: number | undefined = 0
+    let outSize = 0
     if (decodeSize) {
-      if (this._bitstreamVersion < bitstreamVersion(2, 2)) {
-        outSize = this.decodeUint64()
-        if (outSize === undefined) return undefined
-      } else {
-        outSize = decodeVarint(this, false)
-        if (outSize === undefined) return undefined
-      }
+      const size = decodeVarint(this)
+      if (size === undefined) return undefined
+      outSize = size
     }
     this._bitMode = true
     this._bitDecoder.reset(this._data!.subarray(this._pos), this._dataSize - this._pos)
@@ -191,9 +142,7 @@ export class DecoderBuffer {
 
   endBitDecoding(): void {
     this._bitMode = false
-    const bitsDecoded = this._bitDecoder.bitsDecoded()
-    const bytesDecoded = Math.ceil(bitsDecoded / 8)
-    this._pos += bytesDecoded
+    this._pos += Math.ceil(this._bitDecoder._bitOffset / 8)
   }
 
   decodeLeastSignificantBits32(nbits: number): number | undefined {
@@ -201,23 +150,8 @@ export class DecoderBuffer {
     return this._bitDecoder.getBits(nbits)
   }
 
-  decodeVarintUint32(): number | undefined {
-    return decodeVarint(this, false)
-  }
-
-  decodeVarintUint64(): number | undefined {
-    return decodeVarint(this, false)
-  }
-
   advance(bytes: number): void {
     this._pos += bytes
-  }
-
-  get bitstreamVersion(): number {
-    return this._bitstreamVersion
-  }
-  set bitstreamVersion(v: number) {
-    this._bitstreamVersion = v
   }
 
   get data(): Uint8Array {

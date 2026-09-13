@@ -17,9 +17,6 @@ export function decodeSymbols(
     return true
   }
   const scheme = srcBuffer.decodeUint8()
-  if (scheme === undefined) {
-    return false
-  }
   if (scheme === SymbolCodingMethod.SYMBOL_CODING_TAGGED) {
     return decodeTaggedSymbols(numValues, numComponents, srcBuffer, outValues)
   } else if (scheme === SymbolCodingMethod.SYMBOL_CODING_RAW) {
@@ -132,36 +129,12 @@ export function parseRawSymbolStream(numValues: number, srcBuffer: DecoderBuffer
   return decoder
 }
 
-function decodeRawSymbolsInternal(
-  uniqueSymbolsBitLength: number,
-  numValues: number,
-  srcBuffer: DecoderBuffer,
-  outValues: Uint32Array,
-): boolean {
-  const decoder = new RAnsSymbolDecoder(uniqueSymbolsBitLength)
-  if (!decoder.create(srcBuffer, numValues)) {
-    return false
-  }
-
-  if (numValues > 0 && decoder.numSymbols === 0) {
-    return false
-  }
-
-  if (!decoder.startDecoding(srcBuffer)) {
+function decodeRawSymbols(numValues: number, srcBuffer: DecoderBuffer, outValues: Uint32Array): boolean {
+  const decoder = parseRawSymbolStream(numValues, srcBuffer)
+  if (decoder === null) {
     return false
   }
   decoder.ans_.decodeSymbols(outValues, numValues)
   decoder.endDecoding()
   return true
-}
-
-function decodeRawSymbols(numValues: number, srcBuffer: DecoderBuffer, outValues: Uint32Array): boolean {
-  const maxBitLength = srcBuffer.decodeUint8()
-  if (maxBitLength === undefined) {
-    return false
-  }
-  if (maxBitLength < 1 || maxBitLength > 18) {
-    return false
-  }
-  return decodeRawSymbolsInternal(maxBitLength, numValues, srcBuffer, outValues)
 }

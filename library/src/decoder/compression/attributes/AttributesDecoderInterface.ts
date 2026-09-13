@@ -6,57 +6,31 @@ import type { PointCloud } from '../../point_cloud/PointCloud'
 import type { PointCloudDecoder } from '../point_cloud/PointCloudDecoder'
 import type { PendingSymbolStream } from './SequentialAttributeDecoder'
 
-// Abstract interface used by PointCloudDecoder; methods must be overridden.
-class AttributesDecoderInterface {
-  constructor() {}
+// Interface used by PointCloudDecoder; SequentialAttributeDecodersController is
+// the only implementation (type-only, no runtime base class).
+export interface AttributesDecoderInterface {
+  init(decoder: PointCloudDecoder, pointCloud: PointCloud): boolean
 
-  init(_decoder: PointCloudDecoder, _pointCloud: PointCloud): boolean {
-    return false
-  }
+  decodeAttributesDecoderData(buffer: DecoderBuffer): boolean
 
-  decodeAttributesDecoderData(_buffer: DecoderBuffer): boolean {
-    return false
-  }
-
-  // --- Optional two-phase decode across attributes decoders ---
+  // --- Two-phase decode across attributes decoders ---
   // PointCloudDecoder parses every decoder first (all buffer reads are
   // size-driven, so parsing runs ahead of the deferred rANS symbol decodes),
   // then decodes the collected streams two at a time, then finishes each
   // decoder in order (so parent attributes complete before dependents).
-  // Defaults keep the original single-phase behavior for decoders that do not
-  // split.
+  decodeAttributesParse(buffer: DecoderBuffer): boolean
 
-  decodeAttributesParse(buffer: DecoderBuffer): boolean {
-    return this.decodeAttributes(buffer)
-  }
+  collectPendingSymbolStreams(out: PendingSymbolStream[]): void
 
-  collectPendingSymbolStreams(_out: PendingSymbolStream[]): void {}
+  decodeAttributesFinish(): boolean
 
-  decodeAttributesFinish(): boolean {
-    return true
-  }
+  getAttributeId(i: number): number
 
-  decodeAttributes(_buffer: DecoderBuffer): boolean {
-    return false
-  }
+  getNumAttributes(): number
 
-  getAttributeId(_i: number): number {
-    return -1
-  }
-
-  getNumAttributes(): number {
-    return 0
-  }
-
-  getDecoder(): PointCloudDecoder | null {
-    return null
-  }
+  getDecoder(): PointCloudDecoder | null
 
   // Attribute data in portable (post-transform) format; identical on encoder
   // and decoder, so usable by predictors.
-  getPortableAttribute(_pointAttributeId: number): PointAttribute | null {
-    return null
-  }
+  getPortableAttribute(pointAttributeId: number): PointAttribute | null
 }
-
-export { AttributesDecoderInterface }

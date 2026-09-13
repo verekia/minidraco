@@ -1,7 +1,6 @@
 // Ported from draco.js src/attributes/AttributeQuantizationTransform.js (MIT)
 
 import { DataType } from '../core/DracoTypes'
-import { Dequantizer } from '../core/QuantizationUtils'
 import { AttributeTransform } from './AttributeTransform'
 import { AttributeTransformType } from './AttributeTransformType'
 
@@ -10,16 +9,9 @@ import type { AttributeTransformData } from './AttributeTransformData'
 import type { PointAttribute } from './PointAttribute'
 
 class AttributeQuantizationTransform extends AttributeTransform {
-  _quantizationBits: number
-  _minValues: number[]
-  _range: number
-
-  constructor() {
-    super()
-    this._quantizationBits = -1
-    this._minValues = []
-    this._range = 0
-  }
+  _quantizationBits = -1
+  _minValues: number[] = []
+  _range = 0
 
   override copyToAttributeTransformData(outData: AttributeTransformData): void {
     outData.transformType = AttributeTransformType.QUANTIZATION_TRANSFORM
@@ -45,10 +37,7 @@ class AttributeQuantizationTransform extends AttributeTransform {
     this._range = range
 
     const qBits = decoderBuffer.decodeUint8()
-    if (qBits === undefined) return false
-    if (!AttributeQuantizationTransform._isQuantizationValid(qBits)) {
-      return false
-    }
+    if (qBits === undefined || qBits < 1 || qBits > 30) return false
     this._quantizationBits = qBits
     return true
   }
@@ -59,15 +48,13 @@ class AttributeQuantizationTransform extends AttributeTransform {
     }
 
     const maxQuantizedValue = ((1 << this._quantizationBits) >>> 0) - 1
+    if (maxQuantizedValue <= 0) return false
+    // C++ Dequantizer computes delta_ as `range / static_cast<float>(max_quantized_value)`
+    // in float32. JS double division is 1-2 ULP off the WASM decoder, so fround every step.
+    const delta = Math.fround(this._range / Math.fround(maxQuantizedValue))
     const numComponents = targetAttribute.numComponents
-    const dequantizer = new Dequantizer()
-    if (!dequantizer.initFromRange(this._range, maxQuantizedValue)) {
-      return false
-    }
-
     const numValues = targetAttribute.size
     const total = numValues * numComponents
-    const delta = dequantizer.delta
     const minValues = this._minValues
 
     // The portable (source) attribute holds native-endian int32; the target
@@ -116,10 +103,6 @@ class AttributeQuantizationTransform extends AttributeTransform {
       }
     }
     return true
-  }
-
-  static _isQuantizationValid(quantizationBits: number): boolean {
-    return quantizationBits >= 1 && quantizationBits <= 30
   }
 }
 

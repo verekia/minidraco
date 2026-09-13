@@ -3,30 +3,19 @@
 import { scratchUint8 } from './ScratchArena'
 
 export class DataBuffer {
-  _data: Uint8Array
+  _data: Uint8Array = new Uint8Array(0)
 
-  constructor() {
-    this._data = new Uint8Array(0)
-  }
-
-  update(data: Uint8Array | ArrayBufferView | ArrayBuffer | null | undefined, size: number, offset = 0): boolean {
-    if (data === null || data === undefined) {
-      if (size + offset < 0) return false
-      this._resize(size + offset)
-    } else {
-      if (size < 0) return false
-      if (size + offset > this._data.length) {
-        this._resize(size + offset)
-      }
-      const view = data as ArrayBufferView
-      const src = new Uint8Array((view.buffer || data) as ArrayBuffer, view.byteOffset || 0, size)
-      this._data.set(src, offset)
+  // Resizes to `size` bytes (contents preserved); when `data` is given, grows
+  // as needed and copies its first `size` bytes in.
+  update(data: Uint8Array | null, size: number): void {
+    if (data === null) {
+      this._resize(size)
+      return
     }
-    return true
-  }
-
-  resize(newSize: number): void {
-    this._resize(newSize)
+    if (size > this._data.length) {
+      this._resize(size)
+    }
+    this._data.set(data.length === size ? data : data.subarray(0, size))
   }
 
   // Replaces the contents with a decode-scoped scratch buffer of exactly
@@ -39,25 +28,16 @@ export class DataBuffer {
     this._data = scratchUint8(size)
   }
 
-  write(bytePos: number, inArray: Uint8Array | ArrayBufferView | ArrayBuffer, dataSize: number): void {
-    // Fast path: the common caller passes a Uint8Array of exactly dataSize bytes.
-    // Avoid allocating a wrapper view per value (dominates storage time / GC pressure).
-    if (inArray instanceof Uint8Array) {
-      this._data.set(inArray.length === dataSize ? inArray : inArray.subarray(0, dataSize), bytePos)
-      return
-    }
-    const view = inArray as ArrayBufferView
-    const src = new Uint8Array((view.buffer || inArray) as ArrayBuffer, view.byteOffset || 0, dataSize)
-    this._data.set(src, bytePos)
+  // The caller passes a Uint8Array of exactly dataSize bytes in the common
+  // case; avoid allocating a wrapper view per value (dominates storage time /
+  // GC pressure).
+  write(bytePos: number, inArray: Uint8Array, dataSize: number): void {
+    this._data.set(inArray.length === dataSize ? inArray : inArray.subarray(0, dataSize), bytePos)
   }
 
   get data(): Uint8Array {
     return this._data
   }
-  get dataSize(): number {
-    return this._data.length
-  }
-
   _resize(newSize: number): void {
     if (newSize === this._data.length) return
     const newData = new Uint8Array(newSize)

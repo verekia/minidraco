@@ -1,17 +1,14 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/MeshPredictionSchemeConstrainedMultiParallelogramDecoder.js (MIT)
 
+import { decodeVarint } from '../../../core/VarintDecoding'
 import { RAnsBitDecoder } from '../../bit_coders/RAnsBitDecoder'
 import { MeshPredictionSchemeDecoder } from './MeshPredictionSchemeDecoder'
 import { computeParallelogramPrediction } from './MeshPredictionSchemeParallelogramShared'
 
-import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { DecoderBuffer } from '../../../core/DecoderBuffer'
-import type { MeshPredictionSchemeData } from './MeshPredictionSchemeData'
-import type { PredictionSchemeDecodingTransform } from './PredictionSchemeDecoder'
 
 const kInvalidCornerIndex = -1
 
-const OPTIMAL_MULTI_PARALLELOGRAM = 0
 const MAX_NUM_PARALLELOGRAMS = 4
 
 /**
@@ -19,37 +16,14 @@ const MAX_NUM_PARALLELOGRAMS = 4
  * determine which parallelograms to use.
  */
 class MeshPredictionSchemeConstrainedMultiParallelogramDecoder extends MeshPredictionSchemeDecoder {
-  _selectedMode: number
-  _isCreaseEdge: boolean[][]
-
-  constructor(
-    attribute: PointAttribute,
-    transform: PredictionSchemeDecodingTransform,
-    meshData: MeshPredictionSchemeData,
-  ) {
-    super(attribute, transform, meshData)
-    this._selectedMode = OPTIMAL_MULTI_PARALLELOGRAM
-    // Crease edges stored per context (number of available parallelograms).
-    this._isCreaseEdge = []
-    for (let i = 0; i < MAX_NUM_PARALLELOGRAMS; ++i) {
-      this._isCreaseEdge.push([])
-    }
-  }
-
-  override isInitialized(): boolean {
-    return this._meshData.isInitialized()
-  }
+  // Crease edges stored per context (number of available parallelograms),
+  // one list per context up to MAX_NUM_PARALLELOGRAMS.
+  _isCreaseEdge: boolean[][] = [[], [], [], []]
 
   override decodePredictionData(buffer: DecoderBuffer): boolean {
-    if (buffer.bitstreamVersion < 0x0202) {
-      const mode = buffer.decodeUint8()
-      if (mode === undefined) return false
-      if (mode !== OPTIMAL_MULTI_PARALLELOGRAM) return false
-    }
-
     // Decode crease edge flags via rANS bit coder, one context per parallelogram count.
     for (let i = 0; i < MAX_NUM_PARALLELOGRAMS; ++i) {
-      const numFlags = buffer.decodeVarintUint32()
+      const numFlags = decodeVarint(buffer)
       if (numFlags === undefined) return false
       if (numFlags > this._meshData.cornerTable.numCorners()) return false
       if (numFlags > 0) {
@@ -68,9 +42,9 @@ class MeshPredictionSchemeConstrainedMultiParallelogramDecoder extends MeshPredi
   override computeOriginalValues(
     inCorr: Int32Array,
     outData: Int32Array,
-    size: number,
+    _size: number,
     numComponents: number,
-    entryToPointIdMap: Int32Array,
+    _entryToPointIdMap: Int32Array,
   ): boolean {
     this._transform.init(numComponents)
 

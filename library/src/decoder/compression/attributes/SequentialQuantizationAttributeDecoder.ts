@@ -10,48 +10,28 @@ import type { PointCloudDecoder } from '../point_cloud/PointCloudDecoder'
 // Decoder for attribute values encoded with the
 // SequentialQuantizationAttributeEncoder.
 class SequentialQuantizationAttributeDecoder extends SequentialIntegerAttributeDecoder {
-  _quantizationTransform: AttributeQuantizationTransform
-
-  constructor() {
-    super()
-    this._quantizationTransform = new AttributeQuantizationTransform()
-  }
+  _quantizationTransform = new AttributeQuantizationTransform()
 
   override init(decoder: PointCloudDecoder, attributeId: number): boolean {
     if (!super.init(decoder, attributeId)) {
       return false
     }
-    const attribute = decoder.pointCloud()!.attribute(attributeId)!
     // Only floating point attributes can be quantized.
-    if (attribute.dataType !== DataType.FLOAT32) {
+    return this.attribute!.dataType === DataType.FLOAT32
+  }
+
+  override decodeDataNeededByPortableTransform(_pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+    // The portable attribute is null only in backward-compatibility mode; fall
+    // back to the raw attribute.
+    const att = this.getPortableAttribute() ?? this.attribute!
+    if (!this._quantizationTransform.decodeParameters(att, buffer)) {
       return false
     }
-    return true
+    return this._quantizationTransform.transferToAttribute(this._portableAttribute!)
   }
 
-  override decodeDataNeededByPortableTransform(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    if (!this._decodeQuantizedDataInfo()) {
-      return false
-    }
-
-    return this._quantizationTransform.transferToAttribute(this.portableAttribute!)
-  }
-
-  // Override: dequantize the values instead of a generic integer store.
-  override _storeValues(numPoints: number): boolean {
-    return this._dequantizeValues(numPoints)
-  }
-
-  _decodeQuantizedDataInfo(): boolean {
-    let att = this.getPortableAttribute()
-    if (att === null) {
-      // Null only in backward-compatibility mode; fall back to the raw attribute.
-      att = this.attribute
-    }
-    return this._quantizationTransform.decodeParameters(att!, this.decoder!.buffer()!)
-  }
-
-  _dequantizeValues(_numValues: number): boolean {
+  // Dequantize the values instead of a generic integer store.
+  override _storeValues(_numValues: number): boolean {
     return this._quantizationTransform.inverseTransformAttribute(this.getPortableAttribute()!, this.attribute!)
   }
 }

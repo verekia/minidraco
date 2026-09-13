@@ -1,6 +1,6 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/MeshPredictionSchemeTexCoordsPortablePredictor.js (MIT)
 
-import { DataType } from '../../../core/DracoTypes'
+import { fillInt32PositionCache } from './MeshPredictionSchemeGeometricNormalPredictorArea'
 
 import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { MeshPredictionSchemeData } from './MeshPredictionSchemeData'
@@ -24,80 +24,24 @@ function bigIntSqrt(value: bigint): bigint {
   return x
 }
 
-// Precompute every entry's integer position into a flat Int32Array (the JS-port
-// form of the C++ predictor's per-call GetPositionForEntryId()).
-function buildInt32PositionCache(
-  att: PointAttribute,
-  map: Int32Array,
-  numEntries: number,
-  tempPos: number[],
-): Int32Array {
-  const cache = new Int32Array(numEntries * 3)
-  const bufData = att.buffer && att.buffer.data
-
-  if (att.dataType === DataType.INT32 && att.numComponents === 3 && bufData) {
-    const src = new Int32Array(bufData.buffer)
-    const srcStart = (bufData.byteOffset + att.byteOffset) >> 2
-    const stride = att.byteStride >> 2
-    const isIdentity = att.isMappingIdentity
-    const indicesMap = att.indicesMap
-    if (isIdentity) {
-      for (let d = 0; d < numEntries; ++d) {
-        const srcOffset = srcStart + map[d] * stride
-        const o = d * 3
-        cache[o] = src[srcOffset]
-        cache[o + 1] = src[srcOffset + 1]
-        cache[o + 2] = src[srcOffset + 2]
-      }
-    } else {
-      for (let d = 0; d < numEntries; ++d) {
-        const srcOffset = srcStart + indicesMap[map[d]] * stride
-        const o = d * 3
-        cache[o] = src[srcOffset]
-        cache[o + 1] = src[srcOffset + 1]
-        cache[o + 2] = src[srcOffset + 2]
-      }
-    }
-  } else {
-    for (let d = 0; d < numEntries; ++d) {
-      att.convertValue(att.mappedIndex(map[d]), tempPos)
-      const o = d * 3
-      cache[o] = tempPos[0]
-      cache[o + 1] = tempPos[1]
-      cache[o + 2] = tempPos[2]
-    }
-  }
-  return cache
-}
-
 /**
  * Predictor functionality used for portable UV prediction by both encoder and
  * decoder. This implements only the decoder path (is_encoder_t = false).
  */
 class MeshPredictionSchemeTexCoordsPortablePredictor {
-  static NUM_COMPONENTS = 2
-
-  _posAttribute: PointAttribute | null
-  _entryToPointIdMap: Int32Array | null
-  _predictedValue: Int32Array
-  _orientations: Uint8Array
-  _numOrientations: number
+  _posAttribute: PointAttribute | null = null
+  _entryToPointIdMap: Int32Array | null = null
+  _predictedValue = new Int32Array(2)
+  _orientations = new Uint8Array(0)
+  _numOrientations = 0
   _meshData: MeshPredictionSchemeData
-  _tempPos: number[]
-  _posCache: Int32Array | null
-  _cornerToVertex: Int32Array | null
+  _tempPos: number[] = new Array(3)
+  // Flat Int32 position cache so fetches are array reads, not convertValue calls.
+  _posCache: Int32Array | null = null
+  _cornerToVertex: Int32Array | null = null
 
   constructor(meshData: MeshPredictionSchemeData) {
-    this._posAttribute = null
-    this._entryToPointIdMap = null
-    this._predictedValue = new Int32Array(2)
-    this._orientations = new Uint8Array(0)
-    this._numOrientations = 0
     this._meshData = meshData
-    this._tempPos = new Array(3)
-    // Flat Int32 position cache so fetches are array reads, not convertValue calls.
-    this._posCache = null
-    this._cornerToVertex = null
   }
 
   setPositionAttribute(positionAttribute: PointAttribute): void {
@@ -106,10 +50,6 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
 
   setEntryToPointIdMap(map: Int32Array): void {
     this._entryToPointIdMap = map
-  }
-
-  isInitialized(): boolean {
-    return this._posAttribute !== null
   }
 
   get predictedValue(): Int32Array {
@@ -126,7 +66,9 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
   }
 
   buildPositionCache(numEntries: number): void {
-    this._posCache = buildInt32PositionCache(this._posAttribute!, this._entryToPointIdMap!, numEntries, this._tempPos)
+    const posCache = new Int32Array(numEntries * 3)
+    fillInt32PositionCache(posCache, this._posAttribute!, this._entryToPointIdMap!, numEntries, this._tempPos)
+    this._posCache = posCache
     this._cornerToVertex = this._meshData.cornerTable.cornerToVertexArray() as Int32Array
   }
 

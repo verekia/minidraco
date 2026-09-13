@@ -28,13 +28,15 @@ export type TraversalCache = Map<Int32Array | number[], Map<number, TraversalCac
 class MeshTraversalSequencer {
   _mesh: Mesh
   _encodingData: MeshAttributeIndicesEncodingData
-  _traverser: DepthFirstTraverser | MaxPredictionDegreeTraverser | null
-  _outPointIds: Int32Array
-  _numOutPoints: number
-  _traversalCache: TraversalCache | null
+  _traverser: DepthFirstTraverser | MaxPredictionDegreeTraverser | null = null
+  _outPointIds: Int32Array = new Int32Array(0)
+  _numOutPoints = 0
+  // Per-decode cache, keyed by corner table, shared across the attribute
+  // decoders of one mesh (see MeshEdgebreakerDecoderImpl).
+  _traversalCache: TraversalCache
   // The cache entry the last generateSequence resolved to (hit or store);
   // carries the shared indicesMap.
-  _cacheEntry: TraversalCacheEntry | null
+  _cacheEntry: TraversalCacheEntry | null = null
   // One representative corner per point id, when the connectivity decoder
   // recorded them (see MeshEdgebreakerDecoderImpl._assignAttributeVerticesAndPoints).
   _pointCorner: Int32Array | null
@@ -42,18 +44,12 @@ class MeshTraversalSequencer {
   constructor(
     mesh: Mesh,
     encodingData: MeshAttributeIndicesEncodingData,
-    traversalCache: TraversalCache | null = null,
-    pointCorner: Int32Array | null = null,
+    traversalCache: TraversalCache,
+    pointCorner: Int32Array | null,
   ) {
     this._mesh = mesh
     this._encodingData = encodingData
-    this._traverser = null
-    this._outPointIds = new Int32Array(0)
-    this._numOutPoints = 0
-    // Optional per-decode cache, keyed by corner table, shared across the
-    // attribute decoders of one mesh (see MeshEdgebreakerDecoderImpl).
     this._traversalCache = traversalCache
-    this._cacheEntry = null
     this._pointCorner = pointCorner
   }
 
@@ -75,42 +71,41 @@ class MeshTraversalSequencer {
     // adoptVertexRecompute) so they produce the same traversal, and within a
     // prim all attributes share faces_ -- so the cached point order/maps apply.
     const cacheKey = cornerTable.cornerToVertexArray()
-    if (this._traversalCache) {
-      const byMethod = this._traversalCache.get(cacheKey)
-      const cached = byMethod && byMethod.get(methodId)
-      if (cached !== undefined) {
-        this._outPointIds = cached.pointIds
-        this._encodingData.adoptTraversalResult(cached.vertexMap, cached.cornerMap, cached.numValues)
-        this._cacheEntry = cached
-        return true
-      }
+    const encodingData = this._encodingData
+    let byMethod = this._traversalCache.get(cacheKey)
+    const cached = byMethod && byMethod.get(methodId)
+    if (cached !== undefined) {
+      this._outPointIds = cached.pointIds
+      encodingData.adoptTraversalResult(cached.vertexMap, cached.cornerMap, cached.numValues)
+      this._cacheEntry = cached
+      return true
     }
 
     if (!this._generateSequenceInternal()) {
       return false
     }
 
-    if (this._encodingData.numValues < this._encodingData._encodedAttributeValueIndexToCornerMap.length) {
-      this._encodingData._encodedAttributeValueIndexToCornerMap =
-        this._encodingData._encodedAttributeValueIndexToCornerMap.subarray(0, this._encodingData.numValues)
+    const numValues = encodingData.numValues
+    if (numValues < encodingData.encodedAttributeValueIndexToCornerMap.length) {
+      encodingData.encodedAttributeValueIndexToCornerMap = encodingData.encodedAttributeValueIndexToCornerMap.subarray(
+        0,
+        numValues,
+      )
     }
 
-    if (this._traversalCache) {
-      let byMethod = this._traversalCache.get(cacheKey)
-      if (byMethod === undefined) {
-        byMethod = new Map()
-        this._traversalCache.set(cacheKey, byMethod)
-      }
-      const entry: TraversalCacheEntry = {
-        pointIds: this._outPointIds,
-        vertexMap: this._encodingData.vertexToEncodedAttributeValueIndexMap,
-        cornerMap: this._encodingData.encodedAttributeValueIndexToCornerMap,
-        numValues: this._encodingData.numValues,
-        indicesMap: null,
-      }
-      byMethod.set(methodId, entry)
-      this._cacheEntry = entry
+    if (byMethod === undefined) {
+      byMethod = new Map()
+      this._traversalCache.set(cacheKey, byMethod)
     }
+    const entry: TraversalCacheEntry = {
+      pointIds: this._outPointIds,
+      vertexMap: encodingData.vertexToEncodedAttributeValueIndexMap,
+      cornerMap: encodingData.encodedAttributeValueIndexToCornerMap,
+      numValues,
+      indicesMap: null,
+    }
+    byMethod.set(methodId, entry)
+    this._cacheEntry = entry
     return true
   }
 
@@ -127,7 +122,7 @@ class MeshTraversalSequencer {
     // all fixed within one traversal-cache entry — every attribute that
     // resolved to the same entry gets an identical map, so share the first one
     // computed instead of re-walking every corner per attribute. The map is
-    // read-only downstream (extractTo / copyFrom, which slices).
+    // read-only downstream (extractTo).
     const entry = this._cacheEntry
     if (entry !== null && entry.indicesMap !== null) {
       attribute.setExplicitMappingShared(entry.indicesMap)
@@ -201,7 +196,6 @@ class MeshTraversalSequencer {
     if (!traverser.traverseAll()) {
       return false
     }
-    traverser.onTraversalEnd()
 
     if (!traverser.emitsPointIds) {
       // The depth-first traverser records only the corner of each new vertex;
@@ -209,7 +203,7 @@ class MeshTraversalSequencer {
       // gives the same sequence the observer would have appended, one entry
       // per value in encoding order.
       const numValues = this._encodingData.numValues
-      const cornerMap = this._encodingData._encodedAttributeValueIndexToCornerMap
+      const cornerMap = this._encodingData.encodedAttributeValueIndexToCornerMap
       const faces = this._mesh.faces_
       const outPointIds = this._outPointIds
       for (let i = 0; i < numValues; ++i) {

@@ -39,7 +39,7 @@ class DracoJsLoader extends MinidracoLoader {
 }
 
 export const createDracoLoader = (kind: DecoderKind) => {
-  if (kind === 'minidraco') return new MinidracoLoader()
+  if (kind === 'minidraco') return new MinidracoLoader({ workers: true })
   if (kind === 'draco.js') return new DracoJsLoader()
 
   const loader = new DRACOLoader()

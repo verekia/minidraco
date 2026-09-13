@@ -1,30 +1,20 @@
 // Ported from draco.js src/compression/mesh/traverser/MeshAttributeIndicesEncodingObserver.js (MIT)
 
 import type { Mesh } from '../../../mesh/Mesh'
-import type { MeshAttributeCornerTable } from '../../../mesh/MeshAttributeCornerTable'
-import type { CornerTable, MeshAttributeIndicesEncodingData } from '../MeshEdgebreakerDecoderImpl'
+import type { MeshAttributeIndicesEncodingData } from '../MeshEdgebreakerDecoderImpl'
 import type { MeshTraversalSequencer } from './MeshTraversalSequencer'
 
 // Observer that records vertex visit order during mesh traversal.
 // Used to generate encoding/decoding order for attribute values.
 class MeshAttributeIndicesEncodingObserver {
-  _attConnectivity: CornerTable | MeshAttributeCornerTable
   _encodingData: MeshAttributeIndicesEncodingData
-  _mesh: Mesh
   _sequencer: MeshTraversalSequencer
   _vertexToEncodedMap: Int32Array
   _encodedToCornerMap: Int32Array
   _faces: Int32Array
 
-  constructor(
-    attConnectivity: CornerTable | MeshAttributeCornerTable,
-    mesh: Mesh,
-    sequencer: MeshTraversalSequencer,
-    encodingData: MeshAttributeIndicesEncodingData,
-  ) {
-    this._attConnectivity = attConnectivity
+  constructor(mesh: Mesh, sequencer: MeshTraversalSequencer, encodingData: MeshAttributeIndicesEncodingData) {
     this._encodingData = encodingData
-    this._mesh = mesh
     this._sequencer = sequencer
     this._vertexToEncodedMap = encodingData.vertexToEncodedAttributeValueIndexMap
     this._encodedToCornerMap = encodingData.encodedAttributeValueIndexToCornerMap

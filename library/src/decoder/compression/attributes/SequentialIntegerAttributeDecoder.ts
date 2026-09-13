@@ -21,46 +21,26 @@ type IntTypedArrayConstructor = new (buffer: ArrayBufferLike, byteOffset: number
 
 // Decoder for attributes encoded with the SequentialIntegerAttributeEncoder.
 class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
-  _predictionScheme: PredictionSchemeDecoderInterface | null
+  _predictionScheme: PredictionSchemeDecoderInterface | null = null
   // Two-phase decode state (see SequentialAttributeDecoder): the parse phase
   // stashes the primed raw-symbol stream here so the controller can batch and
   // pair several attributes' decodes; the finish phase consumes it.
-  _pendingSymbolDecoder: RAnsSymbolDecoder | null
-  _pendingNumValues: number
-  _finishPointIds: Int32Array | null
+  _pendingSymbolDecoder: RAnsSymbolDecoder | null = null
+  _pendingNumValues = 0
+  _finishPointIds: Int32Array | null = null
   // Int32 view over the portable attribute's storage (see preparePortableAttribute).
-  _portableData: Int32Array | null
-
-  constructor() {
-    super()
-    this._predictionScheme = null
-    this._pendingSymbolDecoder = null
-    this._pendingNumValues = 0
-    this._finishPointIds = null
-    this._portableData = null
-  }
+  _portableData: Int32Array | null = null
 
   // --- Two-phase decode (parse headers / batch symbol decode / finish) ---
-
-  override decodePortableAttributeParse(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    if (this.attribute!.numComponents <= 0) {
-      return false
-    }
-    if (!this.attribute!.reset(pointIds.length)) {
-      return false
-    }
-    this._finishPointIds = pointIds
-    return this._decodeValuesParse(pointIds, buffer)
-  }
 
   override pendingSymbolStream(): PendingSymbolStream | null {
     if (this._pendingSymbolDecoder === null) {
       return null
     }
-    const portableAttributeData = this.getPortableAttributeData()!
+    const portableData = this._portableData!
     return {
       ans: this._pendingSymbolDecoder.ans_,
-      out: new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, this._pendingNumValues),
+      out: new Uint32Array(portableData.buffer, portableData.byteOffset, this._pendingNumValues),
       count: this._pendingNumValues,
     }
   }
@@ -73,7 +53,12 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     return this._finishIntegerValues(this._finishPointIds!)
   }
 
-  _decodeValuesParse(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+  // The parse phase of the integer decode: prediction scheme, portable
+  // attribute, the symbol stream (raw streams are deferred to the finish
+  // phase) and the prediction data.
+  override decodeValues(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+    this._finishPointIds = pointIds
+
     const predictionSchemeMethod = buffer.decodeInt8()
     if (predictionSchemeMethod === undefined) return false
 
@@ -111,7 +96,7 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     const numEntries = pointIds.length
     const numValues = numEntries * numComponents
     this.preparePortableAttribute(numEntries, numComponents)
-    const portableAttributeData = this.getPortableAttributeData()
+    const portableAttributeData = this._portableData
     if (portableAttributeData === null) {
       return false
     }
@@ -144,34 +129,20 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
         }
       }
     } else {
+      // Uncompressed little-endian integers of numBytes each.
       const numBytes = buffer.decodeUint8()
       if (numBytes === undefined) return false
-
-      if (numBytes === dataTypeLength(DataType.INT32)) {
-        if (portableAttributeData.byteLength < 4 * numValues) {
-          return false
+      const bytes = buffer.decodeBytesView(numBytes * numValues)
+      if (bytes === undefined) return false
+      for (let i = 0; i < numValues; i++) {
+        // |= with << sign-extends into a 32-bit int (for 4 bytes this is
+        // exactly DataView.getInt32 little-endian).
+        let val = 0
+        const valueOffset = i * numBytes
+        for (let b = 0; b < numBytes; b++) {
+          val |= bytes[valueOffset + b] << (b * 8)
         }
-        const bytes = buffer.decodeBytesView(4 * numValues)
-        if (bytes === undefined) return false
-        const srcView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-        for (let i = 0; i < numValues; i++) {
-          portableAttributeData[i] = srcView.getInt32(i * 4, true)
-        }
-      } else {
-        if (buffer.remainingSize < numBytes * numValues) {
-          return false
-        }
-        const bytes = buffer.decodeBytesView(numBytes * numValues)
-        if (bytes === undefined) return false
-        for (let i = 0; i < numValues; i++) {
-          // Little-endian; |= with << sign-extends into a 32-bit int.
-          let val = 0
-          const valueOffset = i * numBytes
-          for (let b = 0; b < numBytes; b++) {
-            val |= bytes[valueOffset + b] << (b * 8)
-          }
-          portableAttributeData[i] = val
-        }
+        portableAttributeData[i] = val
       }
     }
 
@@ -189,76 +160,33 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
   _finishIntegerValues(pointIds: Int32Array): boolean {
     const numComponents = this.getNumValueComponents()
     const numValues = pointIds.length * numComponents
-    const portableAttributeData = this.getPortableAttributeData()
-    if (portableAttributeData === null) {
+    const data = this._portableData
+    if (data === null) {
       return false
     }
-
-    const needsZigzag =
-      numValues > 0 && (this._predictionScheme === null || !this._predictionScheme.areCorrectionsPositive())
-
-    if (this._predictionScheme) {
-      if (numValues > 0) {
-        // Prefer the zigzag-fused decode: it unpacks each correction inline
-        // instead of paying a separate whole-array conversion pass first.
-        if (needsZigzag) {
-          const fused = this._predictionScheme.computeOriginalValuesZigzag(
-            portableAttributeData,
-            portableAttributeData,
-            numValues,
-            numComponents,
-            pointIds,
-          )
-          if (fused !== undefined) {
-            return fused
-          }
-        }
-        if (needsZigzag) {
-          const asUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
-          convertSymbolsToSignedInts(asUint32, numValues, portableAttributeData)
-        }
-        if (
-          !this._predictionScheme.computeOriginalValues(
-            portableAttributeData,
-            portableAttributeData,
-            numValues,
-            numComponents,
-            pointIds,
-          )
-        ) {
-          return false
-        }
-      }
-    } else if (needsZigzag) {
-      // Reinterpret the Int32Array as Uint32 for the signed conversion.
-      const asUint32 = new Uint32Array(portableAttributeData.buffer, portableAttributeData.byteOffset, numValues)
-      convertSymbolsToSignedInts(asUint32, numValues, portableAttributeData)
+    if (numValues === 0) {
+      return true
     }
-    return true
+    const ps = this._predictionScheme
+    if (ps === null) {
+      // Reinterpret the Int32Array as Uint32 for the signed conversion.
+      convertSymbolsToSignedInts(new Uint32Array(data.buffer, data.byteOffset, numValues), numValues, data)
+      return true
+    }
+    if (!ps.areCorrectionsPositive()) {
+      // Prefer the zigzag-fused decode: it unpacks each correction inline
+      // instead of paying a separate whole-array conversion pass first.
+      const fused = ps.computeOriginalValuesZigzag(data, data, numValues, numComponents, pointIds)
+      if (fused !== undefined) {
+        return fused
+      }
+      convertSymbolsToSignedInts(new Uint32Array(data.buffer, data.byteOffset, numValues), numValues, data)
+    }
+    return ps.computeOriginalValues(data, data, numValues, numComponents, pointIds)
   }
 
   override transformAttributeToOriginalFormat(pointIds: Int32Array): boolean {
     return this._storeValues(pointIds.length)
-  }
-
-  // Single-phase entry (base-class decodePortableAttribute path): parse,
-  // decode any deferred symbol stream immediately, finish.
-  override decodeValues(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    this._finishPointIds = pointIds
-    if (!this._decodeValuesParse(pointIds, buffer)) {
-      return false
-    }
-    const pending = this._pendingSymbolDecoder
-    if (pending !== null) {
-      const portableAttributeData = this.getPortableAttributeData()!
-      const outUint32 = new Uint32Array(
-        portableAttributeData.buffer,
-        portableAttributeData.byteOffset,
-        this._pendingNumValues,
-      )
-      pending.ans_.decodeSymbols(outUint32, this._pendingNumValues)
-    }
-    return this.decodePortableAttributeFinish()
   }
 
   // Prediction scheme for decoding integer values; subclasses override for others.
@@ -276,46 +204,34 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
 
   // Stores decoded integer values into the attribute.
   _storeValues(numValues: number): boolean {
-    const dt = this.attribute!.dataType
-    switch (dt) {
-      case DataType.UINT8:
-        this._storeTypedValues(numValues, Uint8Array)
-        break
-      case DataType.INT8:
-        this._storeTypedValues(numValues, Int8Array)
-        break
-      case DataType.UINT16:
-        this._storeTypedValues(numValues, Uint16Array)
-        break
-      case DataType.INT16:
-        this._storeTypedValues(numValues, Int16Array)
-        break
-      case DataType.UINT32:
-        this._storeTypedValues(numValues, Uint32Array)
-        break
-      case DataType.INT32:
-        this._storeTypedValues(numValues, Int32Array)
-        break
-      default:
-        return false
+    const attribute = this.attribute!
+    const dt = attribute.dataType
+    const IntArray: IntTypedArrayConstructor | null =
+      dt === DataType.UINT8
+        ? Uint8Array
+        : dt === DataType.INT8
+          ? Int8Array
+          : dt === DataType.UINT16
+            ? Uint16Array
+            : dt === DataType.INT16
+              ? Int16Array
+              : dt === DataType.UINT32
+                ? Uint32Array
+                : dt === DataType.INT32
+                  ? Int32Array
+                  : null
+    if (IntArray === null) {
+      return false
+    }
+    const total = numValues * attribute.numComponents
+    if (total > 0) {
+      // TypedArray.set coerces per element to the target type -- same result as the
+      // per-entry byte copy, without per-value buffer.write() dispatch. dstAddr has
+      // byteOffset 0, so the typed view is aligned.
+      const dstData = attribute.buffer!.data
+      new IntArray(dstData.buffer, dstData.byteOffset + attribute.byteOffset, total).set(this._portableData!)
     }
     return true
-  }
-
-  _storeTypedValues(numValues: number, TypedArrayClass: IntTypedArrayConstructor): void {
-    const numComponents = this.attribute!.numComponents
-    const total = numValues * numComponents
-    if (total === 0) {
-      return
-    }
-    const src = this.getPortableAttributeData()! // Int32Array of the decoded values.
-    // TypedArray.set coerces per element to the target type -- same result as the
-    // per-entry byte copy, without per-value buffer.write() dispatch. dstAddr has
-    // byteOffset 0, so the typed view is aligned.
-    const attribute = this.attribute!
-    const dstData = attribute.buffer!.data
-    const dst = new TypedArrayClass(dstData.buffer, dstData.byteOffset + attribute.byteOffset, total)
-    dst.set(src)
   }
 
   preparePortableAttribute(numEntries: number, numComponents: number): void {
@@ -333,10 +249,10 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     portAtt.setIdentityMapping()
     // Scratch-backed: the portable attribute is consumed by
     // transformAttributeToOriginalFormat and dropped with the decode, and
-    // decodeIntegerValues writes every one of its entries below.
+    // decodeValues writes every one of its entries.
     portAtt.resetScratch(numEntries)
     portAtt.uniqueId = this.attribute!.uniqueId
-    this.setPortableAttribute(portAtt)
+    this._portableAttribute = portAtt
     // One Int32 view over the portable storage for the whole decode (the
     // storage is fixed here); the per-call subarray + view pair it replaces
     // was allocated several times per attribute.
@@ -345,10 +261,6 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
       numEntries === 0
         ? null
         : new Int32Array(data.buffer, data.byteOffset + portAtt.byteOffset, numEntries * numComponents)
-  }
-
-  getPortableAttributeData(): Int32Array | null {
-    return this._portableData
   }
 }
 

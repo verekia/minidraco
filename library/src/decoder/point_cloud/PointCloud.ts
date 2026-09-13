@@ -2,24 +2,14 @@
 
 import type { PointAttribute } from '../attributes/PointAttribute'
 
-// Must match the C++ GeometryAttribute::Type enum count.
+// Must match the C++ GeometryAttribute::Type enum count (and the list count below).
 const NAMED_ATTRIBUTES_COUNT = 8
 
 class PointCloud {
-  num_points_: number
-  attributes_: (PointAttribute | null)[]
-  named_attribute_index_: number[][]
-
-  constructor() {
-    this.num_points_ = 0
-    this.attributes_ = []
-
-    // named_attribute_index_[type] = [att_id, ...]
-    this.named_attribute_index_ = []
-    for (let i = 0; i < NAMED_ATTRIBUTES_COUNT; ++i) {
-      this.named_attribute_index_.push([])
-    }
-  }
+  num_points_ = 0
+  attributes_: (PointAttribute | null)[] = []
+  // named_attribute_index_[type] = [att_id, ...], one list per named type.
+  named_attribute_index_: number[][] = [[], [], [], [], [], [], [], []]
 
   numNamedAttributes(type: number): number {
     if (type < 0 || type >= NAMED_ATTRIBUTES_COUNT) {
@@ -76,10 +66,8 @@ class PointCloud {
   }
 
   setAttribute(attId: number, pa: PointAttribute): void {
-    if (this.attributes_.length <= attId) {
-      while (this.attributes_.length <= attId) {
-        this.attributes_.push(null)
-      }
+    while (this.attributes_.length <= attId) {
+      this.attributes_.push(null)
     }
 
     if (pa.attributeType < NAMED_ATTRIBUTES_COUNT) {

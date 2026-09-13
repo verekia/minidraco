@@ -1,15 +1,15 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/PredictionSchemeDecoder.js (MIT)
-
-import { PredictionSchemeDecoderInterface } from './PredictionSchemeDecoderInterface'
+// and PredictionSchemeDecoderInterface.js: every scheme extends this class, so
+// the separate interface layer was only boilerplate and is folded in here.
 
 import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { DecoderBuffer } from '../../../core/DecoderBuffer'
 
 // Structural type describing the decoding transforms (wrap / normal octahedron /
 // normal octahedron canonicalized). C++ templates on TransformT; here the
-// transform is a constructor param typed by this interface. getType and
-// quantizationBits are optional because callers feature-test them.
+// transform is a constructor param typed by this interface.
 interface PredictionSchemeDecodingTransform {
+  getType(): number
   init(numComponents: number): void
   areCorrectionsPositive(): boolean
   decodeTransformData(buffer: DecoderBuffer): boolean
@@ -21,7 +21,7 @@ interface PredictionSchemeDecodingTransform {
     outOriginalVals: Int32Array,
     outOffset: number,
   ): void
-  getType?(): number
+  // Octahedral transforms only (the geometric normal scheme needs it).
   quantizationBits?(): number
   // Optional fused delta loop (value[i] = original(value[i-1], corr[i]) over
   // the whole attribute). PredictionSchemeDeltaDecoder uses it when present so
@@ -31,40 +31,63 @@ interface PredictionSchemeDecodingTransform {
 }
 
 /**
- * Base class for typed prediction scheme decoders. C++ templates this on
+ * Base class for prediction scheme decoders. C++ templates this on
  * <DataTypeT, TransformT>; here the transform is a constructor param.
  */
-class PredictionSchemeDecoder extends PredictionSchemeDecoderInterface {
-  _attribute: PointAttribute
+class PredictionSchemeDecoder {
   _transform: PredictionSchemeDecodingTransform
 
-  constructor(attribute: PointAttribute, transform: PredictionSchemeDecodingTransform) {
-    super()
-    this._attribute = attribute
+  constructor(transform: PredictionSchemeDecodingTransform) {
     this._transform = transform
   }
 
-  override decodePredictionData(buffer: DecoderBuffer): boolean {
-    if (!this._transform.decodeTransformData(buffer)) {
-      return false
-    }
-    return true
+  /** True if all correction values are guaranteed to be positive. */
+  areCorrectionsPositive(): boolean {
+    return this._transform.areCorrectionsPositive()
   }
 
-  override getNumParentAttributes(): number {
+  getNumParentAttributes(): number {
     return 0
   }
 
-  override getParentAttributeType(i: number): number {
+  getParentAttributeType(_i: number): number {
     return -1 // INVALID
   }
 
-  override setParentAttribute(att: PointAttribute): boolean {
+  setParentAttribute(_att: PointAttribute): boolean {
     return false
   }
 
-  override areCorrectionsPositive(): boolean {
-    return this._transform.areCorrectionsPositive()
+  decodePredictionData(buffer: DecoderBuffer): boolean {
+    return this._transform.decodeTransformData(buffer)
+  }
+
+  /**
+   * Like computeOriginalValues, but inCorr still holds unsigned zigzag-coded
+   * corrections; the implementation unpacks each one inline, replacing the
+   * standalone convertSymbolsToSignedInts pass. Returns undefined when the
+   * scheme/transform combination cannot fuse (the caller then falls back to
+   * the two-pass path). Base implementation: never fusable.
+   */
+  computeOriginalValuesZigzag(
+    _inCorr: Int32Array,
+    _outData: Int32Array,
+    _size: number,
+    _numComponents: number,
+    _entryToPointIdMap: Int32Array,
+  ): boolean | undefined {
+    return undefined
+  }
+
+  /** Reverts the prediction applied during encoding, writing original values to outData. */
+  computeOriginalValues(
+    _inCorr: Int32Array,
+    _outData: Int32Array,
+    _size: number,
+    _numComponents: number,
+    _entryToPointIdMap: Int32Array,
+  ): boolean {
+    return false
   }
 }
 

@@ -23,10 +23,8 @@ class PredictionSchemeNormalOctahedronCanonicalizedDecodingTransform extends Pre
 
     if (!this._setMaxQuantizedValue(maxQuantizedValue)) return false
 
-    if (this._octahedronToolBox.quantizationBits() < 2) return false
-    if (this._octahedronToolBox.quantizationBits() > 30) return false
-
-    return true
+    const q = this._octahedronToolBox.quantizationBits()
+    return q >= 2 && q <= 30
   }
 
   computeOriginalValue(

@@ -3,15 +3,14 @@
 import type { PointAttribute } from '../../attributes/PointAttribute'
 
 // Sequencer that preserves point order: generates the sequence [0, numPoints-1].
-// Used by the mesh sequential decoder. Implements the interface driven by
-// SequentialAttributeDecodersController.
+// Used by the mesh sequential decoder. Implements the PointsSequencer interface
+// driven by SequentialAttributeDecodersController.
 class LinearSequencer {
   _numPoints: number
-  _outPointIds: Int32Array
+  _outPointIds = new Int32Array(0)
 
   constructor(numPoints: number) {
     this._numPoints = numPoints
-    this._outPointIds = new Int32Array(0)
   }
 
   generateSequence(): boolean {

@@ -11,71 +11,60 @@ const ANS_IO_BASE = 256
 const COARSE_STREAM_FACTOR = 8
 const COARSE_BUCKET_BITS = 8
 
-function memGetLe16(buf: Uint8Array, offset: number): number {
-  return buf[offset] | (buf[offset + 1] << 8)
-}
-
-function memGetLe24(buf: Uint8Array, offset: number): number {
-  return buf[offset] | (buf[offset + 1] << 8) | (buf[offset + 2] << 16)
-}
-
-function memGetLe32(buf: Uint8Array, offset: number): number {
-  return (
-    buf[offset] | (buf[offset + 1] << 8) | (buf[offset + 2] << 16) | ((buf[offset + 3] << 24) >>> 0) // >>> 0 to stay unsigned
-  )
-}
-
+// Stream state of the bit decoder (RAnsBitDecoder). RAnsDecoder carries the
+// same four fields inline, so ansReadInit serves both.
 export class AnsDecoder {
-  buf: Uint8Array | null
-  bufOffset: number
+  buf: Uint8Array | null = null
+  bufOffset = 0
   // First valid byte of this decoder's slice within buf: init is passed
   // absolute offsets into the source buffer to avoid a subarray allocation.
-  bufStart: number
-  state: number
-
-  constructor() {
-    this.buf = null // Uint8Array
-    this.bufOffset = 0
-    this.bufStart = 0
-    this.state = 0
-  }
+  bufStart = 0
+  state = 0
 }
 
-// offset is the number of encoded bytes. Returns 0 on success, 1 on error.
-export function ansReadInit(ans: AnsDecoder, buf: Uint8Array, offset: number, base: number = 0): number {
-  if (offset - base < 1) {
-    return 1
+// Parses the stream trailer: the top two bits of the last encoded byte give
+// the width of the little-endian initial state (1-4 bytes, tag bits masked
+// off; the 8-bit-precision bit decoder allows at most 3, as in the source).
+// offset is the absolute end of the encoded bytes within buf and base
+// the absolute start (offset - base = encoded length); absolute offsets avoid
+// a subarray allocation per init. Returns false on malformed input.
+export function ansReadInit(
+  ans: AnsDecoder,
+  buf: Uint8Array,
+  offset: number,
+  base: number,
+  lRansBase: number,
+  maxBytes: number,
+): boolean {
+  const length = offset - base
+  if (length < 1) {
+    return false
+  }
+  const numBytes = (buf[offset - 1] >> 6) + 1
+  if (numBytes > maxBytes || length < numBytes) {
+    return false
+  }
+  // Straight-line per width (as in the source): this runs once per rANS
+  // stream, thousands of times on a primitive-heavy file.
+  let state: number
+  if (numBytes === 1) {
+    state = buf[offset - 1] & 0x3f
+  } else if (numBytes === 2) {
+    state = (buf[offset - 2] | (buf[offset - 1] << 8)) & 0x3fff
+  } else if (numBytes === 3) {
+    state = (buf[offset - 3] | (buf[offset - 2] << 8) | (buf[offset - 1] << 16)) & 0x3fffff
+  } else {
+    state = (buf[offset - 4] | (buf[offset - 3] << 8) | (buf[offset - 2] << 16) | (buf[offset - 1] << 24)) & 0x3fffffff
+  }
+  state += lRansBase
+  if (state >= lRansBase * ANS_IO_BASE) {
+    return false
   }
   ans.buf = buf
   ans.bufStart = base
-  const x = buf[offset - 1] >> 6
-  if (x === 0) {
-    ans.bufOffset = offset - 1
-    ans.state = buf[offset - 1] & 0x3f
-  } else if (x === 1) {
-    if (offset - base < 2) {
-      return 1
-    }
-    ans.bufOffset = offset - 2
-    ans.state = memGetLe16(buf, offset - 2) & 0x3fff
-  } else if (x === 2) {
-    if (offset - base < 3) {
-      return 1
-    }
-    ans.bufOffset = offset - 3
-    ans.state = memGetLe24(buf, offset - 3) & 0x3fffff
-  } else {
-    return 1
-  }
-  ans.state += ANS_L_BASE
-  if (ans.state >= ANS_L_BASE * ANS_IO_BASE) {
-    return 1
-  }
-  return 0
-}
-
-export function ansReadEnd(ans: AnsDecoder): boolean {
-  return ans.state === ANS_L_BASE
+  ans.bufOffset = offset - numBytes
+  ans.state = state
+  return true
 }
 
 // Freelists for the rANS decoding tables. Symbol decoders run strictly
@@ -107,81 +96,30 @@ export class RAnsDecoder {
   ransPrecision: number
   ransPrecisionMask: number
   lRansBase: number
-  lutTable: Uint8Array | Uint16Array | Uint32Array | null
-  probTable: Uint32Array | null
-  cumProbTable: Uint32Array | null
+  lutTable: Uint8Array | Uint16Array | Uint32Array | null = null
+  probTable: Uint32Array | null = null // flat
+  cumProbTable: Uint32Array | null = null // flat
   // Short-stream mode (see ransBuildLookUpTable): no full-precision lut; a
   // 256-entry bucket table narrows each lookup to a symbol range that a short
   // cumProb scan finishes. cumProbTable then carries one extra trailing entry
   // (== ransPrecision) so the scan needs no bounds check.
-  coarse: boolean
-  bucketShift: number
-  bucketTable: Uint16Array | null
-  buf: Uint8Array | null
-  bufOffset: number
+  coarse = false
+  bucketShift = 0
+  bucketTable: Uint16Array | null = null
+  // Stream state inlined (not a nested AnsDecoder) so the ransRead() hot loop
+  // touches own props; initialized by ansReadInit.
+  buf: Uint8Array | null = null
+  bufOffset = 0
   // First valid byte of this decoder's slice within buf (absolute offsets,
   // see AnsDecoder.bufStart).
-  bufStart: number
-  state: number
+  bufStart = 0
+  state = 0
 
   constructor(ransPrecisionBits: number) {
     this.ransPrecisionBits = ransPrecisionBits
     this.ransPrecision = 1 << ransPrecisionBits
     this.ransPrecisionMask = this.ransPrecision - 1
     this.lRansBase = this.ransPrecision * 4
-    this.lutTable = null // Uint32Array
-    this.probTable = null // Uint32Array, flat
-    this.cumProbTable = null // Uint32Array, flat
-    this.coarse = false
-    this.bucketShift = 0
-    this.bucketTable = null
-    // State inlined (not a nested AnsDecoder) so the ransRead() hot loop touches own props.
-    this.buf = null
-    this.bufOffset = 0
-    this.bufStart = 0
-    this.state = 0
-  }
-
-  // offset is the absolute end of the encoded bytes within buf and base the
-  // absolute start (offset - base = encoded length). Passing the source
-  // buffer with absolute offsets avoids a subarray allocation per init.
-  // Returns 0 on success, non-zero on error.
-  readInit(buf: Uint8Array, offset: number, base: number = 0): number {
-    if (offset - base < 1) {
-      return 1
-    }
-    this.buf = buf
-    this.bufStart = base
-    const x = buf[offset - 1] >> 6
-    if (x === 0) {
-      this.bufOffset = offset - 1
-      this.state = buf[offset - 1] & 0x3f
-    } else if (x === 1) {
-      if (offset - base < 2) {
-        return 1
-      }
-      this.bufOffset = offset - 2
-      this.state = memGetLe16(buf, offset - 2) & 0x3fff
-    } else if (x === 2) {
-      if (offset - base < 3) {
-        return 1
-      }
-      this.bufOffset = offset - 3
-      this.state = memGetLe24(buf, offset - 3) & 0x3fffff
-    } else if (x === 3) {
-      if (offset - base < 4) {
-        return 1
-      }
-      this.bufOffset = offset - 4
-      this.state = memGetLe32(buf, offset - 4) & 0x3fffffff
-    } else {
-      return 1
-    }
-    this.state += this.lRansBase
-    if (this.state >= this.lRansBase * ANS_IO_BASE) {
-      return 1
-    }
-    return 0
   }
 
   readEnd(): boolean {

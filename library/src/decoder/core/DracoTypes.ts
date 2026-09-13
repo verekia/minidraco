@@ -22,22 +22,19 @@ export function dataTypeLength(dt: number): number {
   switch (dt) {
     case DataType.INT8:
     case DataType.UINT8:
+    case DataType.BOOL:
       return 1
     case DataType.INT16:
     case DataType.UINT16:
       return 2
     case DataType.INT32:
     case DataType.UINT32:
+    case DataType.FLOAT32:
       return 4
     case DataType.INT64:
     case DataType.UINT64:
-      return 8
-    case DataType.FLOAT32:
-      return 4
     case DataType.FLOAT64:
       return 8
-    case DataType.BOOL:
-      return 1
     default:
       return -1
   }

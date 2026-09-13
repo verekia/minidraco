@@ -2,7 +2,6 @@
 
 import { PredictionSchemeDecoder, type PredictionSchemeDecodingTransform } from './PredictionSchemeDecoder'
 
-import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { MeshPredictionSchemeData } from './MeshPredictionSchemeData'
 
 /**
@@ -12,12 +11,8 @@ import type { MeshPredictionSchemeData } from './MeshPredictionSchemeData'
 class MeshPredictionSchemeDecoder extends PredictionSchemeDecoder {
   _meshData: MeshPredictionSchemeData
 
-  constructor(
-    attribute: PointAttribute,
-    transform: PredictionSchemeDecodingTransform,
-    meshData: MeshPredictionSchemeData,
-  ) {
-    super(attribute, transform)
+  constructor(transform: PredictionSchemeDecodingTransform, meshData: MeshPredictionSchemeData) {
+    super(transform)
     this._meshData = meshData
   }
 }

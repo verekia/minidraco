@@ -14,25 +14,14 @@ import type { PredictionSchemeDecoderInterface } from './prediction_schemes/Pred
 
 // Decoder for attributes encoded with SequentialNormalAttributeEncoder.
 class SequentialNormalAttributeDecoder extends SequentialIntegerAttributeDecoder {
-  _octahedralTransform: AttributeOctahedronTransform
-
-  constructor() {
-    super()
-    this._octahedralTransform = new AttributeOctahedronTransform()
-  }
+  _octahedralTransform = new AttributeOctahedronTransform()
 
   override init(decoder: PointCloudDecoder, attributeId: number): boolean {
     if (!super.init(decoder, attributeId)) {
       return false
     }
     // Only 3-component FLOAT32 normals are supported.
-    if (this.attribute!.numComponents !== 3) {
-      return false
-    }
-    if (this.attribute!.dataType !== DataType.FLOAT32) {
-      return false
-    }
-    return true
+    return this.attribute!.numComponents === 3 && this.attribute!.dataType === DataType.FLOAT32
   }
 
   // Normals quantize into two octahedral components.
@@ -40,31 +29,28 @@ class SequentialNormalAttributeDecoder extends SequentialIntegerAttributeDecoder
     return 2
   }
 
-  override decodeDataNeededByPortableTransform(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
+  override decodeDataNeededByPortableTransform(_pointIds: Int32Array, buffer: DecoderBuffer): boolean {
     if (!this._octahedralTransform.decodeParameters(this.getPortableAttribute()!, buffer)) {
       return false
     }
-
-    return this._octahedralTransform.transferToAttribute(this.portableAttribute!)
+    return this._octahedralTransform.transferToAttribute(this._portableAttribute!)
   }
 
-  override _storeValues(numPoints: number): boolean {
+  override _storeValues(_numPoints: number): boolean {
     return this._octahedralTransform.inverseTransformAttribute(this.getPortableAttribute()!, this.attribute!)
   }
 
   override createIntPredictionScheme(method: number, transformType: number): PredictionSchemeDecoderInterface | null {
-    switch (transformType) {
-      case PredictionSchemeTransformType.PREDICTION_TRANSFORM_NORMAL_OCTAHEDRON: {
-        const transform = new PredictionSchemeNormalOctahedronDecodingTransform()
-        return createPredictionSchemeForDecoder(method, this.attributeId, this.decoder!, transform)
-      }
-      case PredictionSchemeTransformType.PREDICTION_TRANSFORM_NORMAL_OCTAHEDRON_CANONICALIZED: {
-        const transform = new PredictionSchemeNormalOctahedronCanonicalizedDecodingTransform()
-        return createPredictionSchemeForDecoder(method, this.attributeId, this.decoder!, transform)
-      }
-      default:
-        return null
+    const transform =
+      transformType === PredictionSchemeTransformType.PREDICTION_TRANSFORM_NORMAL_OCTAHEDRON
+        ? new PredictionSchemeNormalOctahedronDecodingTransform()
+        : transformType === PredictionSchemeTransformType.PREDICTION_TRANSFORM_NORMAL_OCTAHEDRON_CANONICALIZED
+          ? new PredictionSchemeNormalOctahedronCanonicalizedDecodingTransform()
+          : null
+    if (transform === null) {
+      return null
     }
+    return createPredictionSchemeForDecoder(method, this.attributeId, this.decoder!, transform)
   }
 }
 

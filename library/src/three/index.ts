@@ -3,11 +3,13 @@
 // Structurally compatible with THREE.DRACOLoader so it can be passed straight
 // to GLTFLoader.setDRACOLoader() with no cast, on any three version.
 //
-// By default decoding runs in a pool of module workers (parallel across
-// primitives, main thread stays free), with a transparent synchronous fallback
-// when workers are unavailable (SSR, worker bundling unsupported). Pass
-// `{ workers: false }` (or setWorkers(false) / setWorkerLimit(0)) to decode
-// synchronously on the main thread instead.
+// By default decoding runs synchronously on the main thread. Pass
+// `{ workers: true }` (or setWorkers(true) / setWorkerLimit(n)) to decode in a
+// pool of module workers instead (parallel across primitives, main thread
+// stays free), with a transparent synchronous fallback when workers are
+// unavailable (SSR, worker bundling unsupported). The pool code lives in
+// pool.ts and is imported on first use, so it is not part of this module's
+// download.
 import {
   BufferAttribute,
   BufferGeometry,
@@ -27,6 +29,7 @@ import { decodeDracoMesh, GeometryAttributeType } from '../index'
 import type { LoadingManager } from 'three'
 
 import type { Mesh, PointAttribute } from '../index'
+import type { RawAttribute, RawGeometry, TaskConfig, WorkerPool } from './pool'
 
 export type AttributeIDs = Record<string, number | string>
 export type AttributeTypes = Record<string, string>
@@ -34,10 +37,10 @@ export type AttributeTypes = Record<string, string>
 export interface MinidracoLoaderOptions {
   // three.js LoadingManager, as with any loader.
   manager?: LoadingManager
-  // false → decode synchronously on the main thread (no worker pool).
-  // Default true. Equivalent to workerLimit: 0 / setWorkers(false).
+  // true → decode in a worker pool. Default false (synchronous on the main
+  // thread). Equivalent to setWorkers(true).
   workers?: boolean
-  // Worker pool size when workers are enabled (default 4).
+  // Worker pool size (default 4). Setting it also enables the pool.
   workerLimit?: number
   // See the mainThreadByteThreshold field (default 0 = always use the pool).
   mainThreadByteThreshold?: number
@@ -45,40 +48,9 @@ export interface MinidracoLoaderOptions {
 
 // LoadingManager instances expose itemStart(); an options bag does not. Lets
 // the constructor keep the three-compatible `new Loader(manager)` form while
-// also accepting `new MinidracoLoader({ workers: false })`.
+// also accepting `new MinidracoLoader({ workers: true })`.
 const isLoadingManager = (value: unknown): value is LoadingManager =>
   typeof (value as { itemStart?: unknown } | null | undefined)?.itemStart === 'function'
-
-interface TaskConfig {
-  attributeIDs: AttributeIDs
-  attributeTypes: AttributeTypes
-  useUniqueIDs: boolean
-  vertexColorSpace: string
-}
-
-interface RawAttribute {
-  name: string
-  array: Float32Array | Int8Array | Int16Array | Int32Array | Uint8Array | Uint16Array | Uint32Array
-  itemSize: number
-}
-
-interface RawGeometry {
-  indices: Uint32Array
-  attributes: RawAttribute[]
-}
-
-interface WorkerEntry {
-  worker: Worker
-  pending: number
-}
-
-interface QueuedTask {
-  id: number
-  buffer: ArrayBuffer
-  taskConfig: TaskConfig
-  resolve: (raw: RawGeometry) => void
-  reject: (error: unknown) => void
-}
 
 type TypedArrayConstructor =
   | Float32ArrayConstructor
@@ -91,13 +63,9 @@ type TypedArrayConstructor =
 
 const _taskCache = new WeakMap<ArrayBuffer, { key: string; promise: Promise<BufferGeometry> }>()
 
-const _attributeTypeMap: Record<string, number> = {
-  POSITION: GeometryAttributeType.POSITION,
-  NORMAL: GeometryAttributeType.NORMAL,
-  COLOR: GeometryAttributeType.COLOR,
-  TEX_COORD: GeometryAttributeType.TEX_COORD,
-  GENERIC: GeometryAttributeType.GENERIC,
-}
+// Named attribute ids (POSITION..GENERIC) looked up by the string the caller
+// passes in attributeIDs.
+const _attributeTypeMap: Record<string, number | undefined> = GeometryAttributeType
 
 const _typedArrayMap: Record<string, TypedArrayConstructor> = {
   Float32Array,
@@ -110,8 +78,18 @@ const _typedArrayMap: Record<string, TypedArrayConstructor> = {
 }
 
 class MinidracoLoader extends Loader<BufferGeometry> {
-  defaultAttributeIDs: AttributeIDs
-  defaultAttributeTypes: AttributeTypes
+  defaultAttributeIDs: AttributeIDs = {
+    position: 'POSITION',
+    normal: 'NORMAL',
+    color: 'COLOR',
+    uv: 'TEX_COORD',
+  }
+  defaultAttributeTypes: AttributeTypes = {
+    position: 'Float32Array',
+    normal: 'Float32Array',
+    color: 'Float32Array',
+    uv: 'Float32Array',
+  }
   workerLimit: number
   // Opt-in (0 = disabled): buffers at or below this size decode on the main
   // thread instead of paying the ~0.5 ms worker message roundtrip.
@@ -121,20 +99,14 @@ class MinidracoLoader extends Loader<BufferGeometry> {
   // tiny primitives.
   mainThreadByteThreshold: number
 
-  _workers: WorkerEntry[]
-  _taskId: number
-  _tasks: Map<number, { resolve: (raw: RawGeometry) => void; reject: (error: unknown) => void; entry: WorkerEntry }>
-  // Tasks queued during the current microtask; flushed as one batched message
-  // per worker (a 488-primitive scene costs 4 postMessages, not 488).
-  _batch: QueuedTask[]
-  _batchScheduled: boolean
-  // Set when spawning a worker fails (bundler without module-worker support,
-  // file:// pages, …): decoding transparently falls back to the main thread.
-  _workersBroken: boolean
-  _workerUrl: string | URL | null
-  // Same-origin blob bootstrap used when the worker asset lives on a CDN
-  // origin (created lazily, revoked on dispose).
-  _workerBlobUrl: string | null
+  // The pool, once its module has loaded; null again after dispose() so a
+  // later decode spawns a fresh one.
+  _pool: WorkerPool | null = null
+  _poolPromise: Promise<WorkerPool | null> | null = null
+  // Set when the pool module fails to load or the pool breaks: decoding
+  // transparently falls back to the main thread.
+  _workersBroken = false
+  _workerUrl: string | URL | null = null
 
   // Accepts either a LoadingManager (three-compatible form) or an options bag.
   constructor(managerOrOptions?: LoadingManager | MinidracoLoaderOptions) {
@@ -142,37 +114,15 @@ class MinidracoLoader extends Loader<BufferGeometry> {
       ? { manager: managerOrOptions }
       : (managerOrOptions ?? {})
     super(options.manager)
-
-    this.defaultAttributeIDs = {
-      position: 'POSITION',
-      normal: 'NORMAL',
-      color: 'COLOR',
-      uv: 'TEX_COORD',
-    }
-
-    this.defaultAttributeTypes = {
-      position: 'Float32Array',
-      normal: 'Float32Array',
-      color: 'Float32Array',
-      uv: 'Float32Array',
-    }
-
-    this.workerLimit = options.workers === false ? 0 : (options.workerLimit ?? 4)
+    const workers = options.workers ?? options.workerLimit !== undefined
+    this.workerLimit = workers ? (options.workerLimit ?? 4) : 0
     this.mainThreadByteThreshold = options.mainThreadByteThreshold ?? 0
-    this._workers = []
-    this._taskId = 0
-    this._tasks = new Map()
-    this._batch = []
-    this._batchScheduled = false
-    this._workersBroken = false
-    this._workerUrl = null
-    this._workerBlobUrl = null
   }
 
   // Overrides where the decode worker is loaded from. Normally unnecessary:
   // the worker resolves through `new URL('./worker.js', import.meta.url)`
   // (bundlers emit it as a hashed asset), and CDN origins are handled by the
-  // blob bootstrap in _getWorker.
+  // blob bootstrap in the pool. Takes effect for the next pool spawned.
   setWorkerUrl(url: string | URL | null): this {
     this._workerUrl = url
     return this
@@ -194,51 +144,33 @@ class MinidracoLoader extends Loader<BufferGeometry> {
 
   setWorkerLimit(limit: number): this {
     this.workerLimit = limit
+    if (this._pool !== null) this._pool.limit = limit
     return this
   }
 
-  // Toggle the worker pool on/off. false decodes synchronously on the main
-  // thread; true enables the pool, keeping the current size or falling back to
-  // the default 4 if it was disabled. For a specific pool size use
-  // setWorkerLimit(n).
+  // Toggle the worker pool on/off. true enables the pool, keeping the current
+  // size or falling back to 4 if it was off; false decodes synchronously on the
+  // main thread (the default). For a specific pool size use setWorkerLimit(n).
   setWorkers(enabled: boolean): this {
-    this.workerLimit = enabled ? this.workerLimit || 4 : 0
-    return this
+    return this.setWorkerLimit(enabled ? this.workerLimit || 4 : 0)
   }
 
+  // Loads the pool module and spawns the whole pool now, so the workers' JIT
+  // warmup overlaps the model download instead of the first decode burst.
   preload(): this {
-    // Spawn the whole pool, not just one worker: each fresh worker runs a
-    // short JIT warmup at startup (see worker.ts), so spawning them all here
-    // lets that overlap the model download instead of the first decode burst.
     if (this._workersAvailable()) {
-      while (this._workers.length < this.workerLimit && this._getWorker() !== null) {
-        // _getWorker creates one worker per call while under the limit
-      }
+      this._getPool().then(pool => pool?.spawnAll())
     }
     return this
   }
 
   dispose(): this {
-    for (const entry of this._workers) entry.worker.terminate()
-    this._workers = []
-    // Settle everything still outstanding so no caller promise hangs after
-    // teardown. Terminated workers never post back, and a batch flush already
-    // scheduled for this tick would otherwise respawn untracked workers — so
-    // reject the queued batch too and empty it (the stale flush then no-ops on
-    // the empty batch). The error is marked isDecodeError so _runTask rejects
-    // the caller instead of retrying the decode on the main thread. The loader
-    // stays reusable: a later decode spawns a fresh pool.
-    const disposedError = new Error('MinidracoLoader: disposed while decoding') as Error & { isDecodeError: boolean }
-    disposedError.isDecodeError = true
-    for (const task of this._batch) task.reject(disposedError)
-    this._batch = []
-    this._batchScheduled = false
-    for (const [, task] of this._tasks) task.reject(disposedError)
-    this._tasks.clear()
-    if (this._workerBlobUrl !== null) {
-      URL.revokeObjectURL(this._workerBlobUrl)
-      this._workerBlobUrl = null
-    }
+    // Outstanding pooled decodes reject (as decode errors, so they are not
+    // retried on the main thread). The loader stays reusable: a later decode
+    // spawns a fresh pool.
+    if (this._pool !== null) this._pool.dispose()
+    this._pool = null
+    this._poolPromise = null
     return this
   }
 
@@ -313,14 +245,18 @@ class MinidracoLoader extends Loader<BufferGeometry> {
   async _runTask(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<BufferGeometry> {
     if (this._workersAvailable()) {
       if (buffer.byteLength > this.mainThreadByteThreshold) {
-        try {
-          const raw = await this._decodeInWorker(buffer, taskConfig)
-          return this._buildGeometryFromRaw(raw, taskConfig)
-        } catch (error) {
-          // Decode errors (malformed data) carry `isDecodeError`; anything else
-          // is worker infrastructure failing — fall back to the sync path.
-          if ((error as { isDecodeError?: boolean })?.isDecodeError) throw error
-          this._workersBroken = true
+        const pool = await this._getPool()
+        if (pool !== null) {
+          try {
+            const raw = await pool.decode(buffer, taskConfig)
+            return this._buildGeometryFromRaw(raw, taskConfig)
+          } catch (error) {
+            // Decode errors (malformed data) carry `isDecodeError`; anything
+            // else is worker infrastructure failing — fall back to the sync
+            // path.
+            if ((error as { isDecodeError?: boolean })?.isDecodeError) throw error
+            this._workersBroken = true
+          }
         }
       } else {
         // Tiny buffer: decode on the main thread, but yield one microtask
@@ -336,146 +272,18 @@ class MinidracoLoader extends Loader<BufferGeometry> {
     return this.workerLimit > 0 && typeof Worker !== 'undefined' && !this._workersBroken
   }
 
-  _getWorker(): WorkerEntry | null {
-    if (this._workersBroken) return null
-
-    if (this._workers.length < this.workerLimit) {
-      // `new URL('./worker.js', import.meta.url)` is recognized by webpack /
-      // turbopack / vite and emitted as a hashed static asset; unbundled, it
-      // resolves to the self-contained dist/worker.js next to this file.
-      // (Kept as a standalone expression — not inline in `new Worker(...)` —
-      // so bundlers emit a plain asset URL instead of a worker chunk.)
-      const workerUrl = this._workerUrl ?? new URL('./worker.js', import.meta.url)
-
-      let worker: Worker
-      try {
-        worker = new Worker(workerUrl, { type: 'module' })
-      } catch {
-        // Typically a SecurityError: the asset lives on a CDN origin (Next.js
-        // assetPrefix), and browsers refuse to construct a Worker from a
-        // cross-origin script. Bootstrap through a same-origin blob module
-        // that imports the CDN URL instead (the import is a CORS request, so
-        // the CDN must send Access-Control-Allow-Origin — as it already must
-        // for fonts/models). If that import fails, the worker's error event
-        // trips the sync fallback below.
-        try {
-          if (this._workerBlobUrl === null) {
-            const bootstrap = `import ${JSON.stringify(String(workerUrl))};`
-            this._workerBlobUrl = URL.createObjectURL(new Blob([bootstrap], { type: 'text/javascript' }))
-          }
-          worker = new Worker(this._workerBlobUrl, { type: 'module' })
-        } catch {
-          this._workersBroken = true
-          return null
-        }
-      }
-      const entry: WorkerEntry = { worker, pending: 0 }
-
-      worker.onmessage = (event: MessageEvent) => {
-        for (const { id, ok, indices, attributes, error } of event.data.results) {
-          const task = this._tasks.get(id)
-          if (!task) continue
-          this._tasks.delete(id)
-          task.entry.pending--
-          if (ok) {
-            task.resolve({ indices, attributes })
-          } else {
-            const decodeError = new Error(error) as Error & { isDecodeError: boolean }
-            decodeError.isDecodeError = true
-            task.reject(decodeError)
-          }
-        }
-      }
-
-      worker.onerror = event => {
-        // Kill the whole pool: reject outstanding tasks so they rerun on the
-        // main thread, and stop routing new ones to workers.
+  // The pool, loading its module on first use. Resolves null (and marks the
+  // workers broken) when the module cannot be loaded, e.g. a bundler that does
+  // not split dynamic imports out of dependencies.
+  _getPool(): Promise<WorkerPool | null> {
+    this._poolPromise ??= import('./pool.js').then(
+      module => (this._pool = new module.WorkerPool(this.workerLimit, this._workerUrl)),
+      () => {
         this._workersBroken = true
-        for (const [id, task] of this._tasks) {
-          if (task.entry.worker === worker) {
-            this._tasks.delete(id)
-            task.reject(new Error(`MinidracoLoader worker failed: ${event.message ?? 'unknown error'}`))
-          }
-        }
-      }
-
-      this._workers.push(entry)
-      return entry
-    }
-
-    let best = this._workers[0]
-    for (const entry of this._workers) if (entry.pending < best.pending) best = entry
-    return best
-  }
-
-  _decodeInWorker(buffer: ArrayBuffer, taskConfig: TaskConfig): Promise<RawGeometry> {
-    const id = this._taskId++
-    return new Promise<RawGeometry>((resolve, reject) => {
-      // Queue instead of posting immediately: tasks issued in the same tick
-      // (GLTFLoader fans out one decode per primitive) flush together as one
-      // message per worker, with the work balanced across the pool up front.
-      this._batch.push({ id, buffer, taskConfig, resolve, reject })
-      if (!this._batchScheduled) {
-        this._batchScheduled = true
-        queueMicrotask(() => this._flushBatch())
-      }
-    })
-  }
-
-  _flushBatch(): void {
-    this._batchScheduled = false
-    const batch = this._batch
-    if (batch.length === 0) return
-    this._batch = []
-
-    // Spawn workers up to the limit (or the batch size, if smaller)
-    while (this._workers.length < Math.min(this.workerLimit, batch.length) && this._getWorker() !== null) {
-      // _getWorker creates one worker per call while under the limit
-    }
-    if (this._workersBroken || this._workers.length === 0) {
-      // The pool broke (possibly between queueing and this flush) or spawning
-      // failed; _runTask falls back to the synchronous path per task.
-      const error = new Error('MinidracoLoader: worker unavailable')
-      for (const task of batch) task.reject(error)
-      return
-    }
-
-    // Greedy longest-first assignment by compressed size: balances the pool
-    // even when primitive sizes are wildly uneven. Workers still busy with a
-    // previous burst start with a handicap (their pending count, priced at
-    // this batch's average task size).
-    batch.sort((a, b) => b.buffer.byteLength - a.buffer.byteLength)
-    let totalBytes = 0
-    for (const task of batch) totalBytes += task.buffer.byteLength
-    const averageBytes = totalBytes / batch.length
-    const buckets = this._workers.map(entry => ({
-      entry,
-      tasks: [] as QueuedTask[],
-      bytes: entry.pending * averageBytes,
-    }))
-    for (const task of batch) {
-      let best = buckets[0]
-      for (const bucket of buckets) if (bucket.bytes < best.bytes) best = bucket
-      best.tasks.push(task)
-      best.bytes += task.buffer.byteLength
-    }
-
-    for (const { entry, tasks } of buckets) {
-      if (tasks.length === 0) continue
-      entry.pending += tasks.length
-      for (const task of tasks) this._tasks.set(task.id, { resolve: task.resolve, reject: task.reject, entry })
-      // The compressed inputs are posted as copies (they're small); the
-      // decoded arrays come back transferred (they're big).
-      entry.worker.postMessage({
-        tasks: tasks.map(task => ({
-          id: task.id,
-          buffer: task.buffer,
-          attributeIDs: task.taskConfig.attributeIDs,
-          attributeTypes: task.taskConfig.attributeTypes,
-          useUniqueIDs: task.taskConfig.useUniqueIDs,
-        })),
-      })
-    }
+        return null
+      },
+    )
+    return this._poolPromise
   }
 
   _buildGeometryFromRaw(raw: RawGeometry, taskConfig: TaskConfig): BufferGeometry {
@@ -500,12 +308,13 @@ class MinidracoLoader extends Loader<BufferGeometry> {
     return this._buildGeometry(mesh, taskConfig)
   }
 
+  // Gathers the requested attributes off a decoded mesh into the same raw shape
+  // the worker posts back, then builds the geometry from it.
   _buildGeometry(dracoGeometry: Mesh, taskConfig: TaskConfig): BufferGeometry {
     const attributeIDs = taskConfig.attributeIDs
     const attributeTypes = taskConfig.attributeTypes
-
-    const geometry = new BufferGeometry()
     const numPoints = dracoGeometry.numPoints()
+    const attributes: RawAttribute[] = []
 
     for (const attributeName in attributeIDs) {
       const OutputTypedArray = _typedArrayMap[attributeTypes[attributeName]]
@@ -524,26 +333,18 @@ class MinidracoLoader extends Loader<BufferGeometry> {
 
       if (!attribute) continue
 
-      const itemSize = attribute.numComponents
-      const array = attribute.extractTo(OutputTypedArray, numPoints)
-
-      const bufferAttribute = new BufferAttribute(array, itemSize)
-
-      if (attributeName === 'color') {
-        this._assignVertexColorSpace(bufferAttribute, taskConfig.vertexColorSpace)
-        bufferAttribute.normalized = !(array instanceof Float32Array)
-      }
-
-      geometry.setAttribute(attributeName, bufferAttribute)
+      attributes.push({
+        name: attributeName,
+        array: attribute.extractTo(OutputTypedArray, numPoints),
+        itemSize: attribute.numComponents,
+      })
     }
 
     const numFaces = dracoGeometry.numFaces()
-    const index = new Uint32Array(numFaces * 3)
-    index.set(dracoGeometry.faces_.subarray(0, numFaces * 3))
+    const indices = new Uint32Array(numFaces * 3)
+    indices.set(dracoGeometry.faces_.subarray(0, numFaces * 3))
 
-    geometry.setIndex(new BufferAttribute(index, 1))
-
-    return geometry
+    return this._buildGeometryFromRaw({ indices, attributes }, taskConfig)
   }
 
   _assignVertexColorSpace(attribute: BufferAttribute, inputColorSpace: string): void {

@@ -1,27 +1,17 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/PredictionSchemeDeltaDecoder.js (MIT)
 
-import { PredictionSchemeDecoder, type PredictionSchemeDecodingTransform } from './PredictionSchemeDecoder'
-
-import type { PointAttribute } from '../../../attributes/PointAttribute'
+import { PredictionSchemeDecoder } from './PredictionSchemeDecoder'
 
 /**
  * Decoder for delta coding: value[i] = value[i-1] + correction[i].
  */
 class PredictionSchemeDeltaDecoder extends PredictionSchemeDecoder {
-  constructor(attribute: PointAttribute, transform: PredictionSchemeDecodingTransform) {
-    super(attribute, transform)
-  }
-
-  override isInitialized(): boolean {
-    return true
-  }
-
   override computeOriginalValues(
     inCorr: Int32Array,
     outData: Int32Array,
     size: number,
     numComponents: number,
-    entryToPointIdMap: Int32Array,
+    _entryToPointIdMap: Int32Array,
   ): boolean {
     const transform = this._transform
     transform.init(numComponents)

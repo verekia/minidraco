@@ -25,35 +25,21 @@ import type { CornerTable, MeshEdgebreakerDecoderImpl } from './MeshEdgebreakerD
 // and it uses them to select entropy context used for decoding of the actual
 // symbols.
 class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDecoder {
-  _cornerTable: CornerTable | null
-  _numVertices: number
-  _lastSymbol: number
-  _activeContext: number
-  _minValence: number
-  _maxValence: number
-  _vertexValences: Int32Array
-  _contextSymbols: Uint32Array[]
+  _cornerTable: CornerTable | null = null
+  _numVertices = 0
+  _lastSymbol = -1
+  _activeContext = -1
+  _minValence = 2
+  _maxValence = 7
+  _vertexValences: Int32Array = new Int32Array(0)
+  _contextSymbols: Uint32Array[] = []
   // Int32Array, not number[]: read and written once per decoded symbol.
-  _contextCounters: Int32Array
+  _contextCounters: Int32Array = new Int32Array(0)
   // corner -> vertex of _cornerTable, cached at init(); the array is created
   // once by CornerTable.reset() before the traversal decoder is initialized and
   // never replaced, so the per-symbol hot path can read it without two property
   // loads.
-  _cornerToVertex: Int32Array
-
-  constructor() {
-    super()
-    this._cornerTable = null
-    this._numVertices = 0
-    this._lastSymbol = -1
-    this._activeContext = -1
-    this._minValence = 2
-    this._maxValence = 7
-    this._vertexValences = new Int32Array(0)
-    this._contextSymbols = []
-    this._contextCounters = new Int32Array(0)
-    this._cornerToVertex = new Int32Array(0)
-  }
+  _cornerToVertex: Int32Array = new Int32Array(0)
 
   override init(decoder: MeshEdgebreakerDecoderImpl): void {
     super.init(decoder)
@@ -72,14 +58,8 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     if (!this.decodeAttributeSeams()) {
       return false
     }
-    outBuffer.init(this.buffer.dataHead, this.buffer.remainingSize, this.buffer.bitstreamVersion)
+    outBuffer.init(this._buffer.dataHead, this._buffer.remainingSize)
 
-    this._minValence = 2
-    this._maxValence = 7
-
-    if (this._numVertices < 0) {
-      return false
-    }
     // Int32Array: read/written for every decoded symbol; typed access keeps
     // the newActiveCornerReached hot path monomorphic. Decode-scoped scratch,
     // zeroed because valences accumulate from 0.

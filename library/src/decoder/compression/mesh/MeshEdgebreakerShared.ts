@@ -17,13 +17,7 @@ export const RIGHT_FACE_EDGE = 1
 // Data about a source face connecting to an already-traversed face that was
 // either the initial face or one encoded with the topology S (split) symbol.
 export class TopologySplitEventData {
-  splitSymbolId: number
-  sourceSymbolId: number
-  sourceEdge: number
-
-  constructor() {
-    this.splitSymbolId = 0
-    this.sourceSymbolId = 0
-    this.sourceEdge = 0 // 0 = LEFT_FACE_EDGE, 1 = RIGHT_FACE_EDGE
-  }
+  splitSymbolId = 0
+  sourceSymbolId = 0
+  sourceEdge = 0 // 0 = LEFT_FACE_EDGE, 1 = RIGHT_FACE_EDGE
 }

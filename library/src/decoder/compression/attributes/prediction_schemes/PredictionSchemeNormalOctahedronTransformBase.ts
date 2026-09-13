@@ -7,11 +7,7 @@
 import { OctahedronToolBox } from '../NormalCompressionUtils'
 
 class PredictionSchemeNormalOctahedronTransformBase {
-  _octahedronToolBox: OctahedronToolBox
-
-  constructor() {
-    this._octahedronToolBox = new OctahedronToolBox()
-  }
+  _octahedronToolBox = new OctahedronToolBox()
 
   areCorrectionsPositive(): boolean {
     return true

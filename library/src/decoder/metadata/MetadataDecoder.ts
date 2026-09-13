@@ -10,16 +10,10 @@ import type { DecoderBuffer } from '../core/DecoderBuffer'
 const kMaxSubmetadataLevel = 1000
 
 class MetadataDecoder {
-  buffer_: DecoderBuffer | null
-
-  constructor() {
-    this.buffer_ = null
-  }
+  constructor(readonly buffer_: DecoderBuffer) {}
 
   // Skips per-attribute metadata followed by the geometry-level metadata.
-  skipGeometryMetadata(inBuffer: DecoderBuffer): boolean {
-    this.buffer_ = inBuffer
-
+  skipGeometryMetadata(): boolean {
     const numAttMetadata = decodeVarint(this.buffer_)
     if (numAttMetadata === undefined) {
       return false
@@ -45,29 +39,26 @@ class MetadataDecoder {
       return false
     }
 
-    const numEntries = decodeVarint(this.buffer_!)
+    const numEntries = decodeVarint(this.buffer_)
     if (numEntries === undefined) {
       return false
     }
     for (let i = 0; i < numEntries; ++i) {
-      if (!this._skipEntry()) {
+      // Key-value entry: name then a length-prefixed value.
+      const nameSkipped = this._skipName()
+      const dataSize = nameSkipped ? decodeVarint(this.buffer_) : undefined
+      if (dataSize === undefined || dataSize === 0 || !this._skipBytes(dataSize)) {
         return false
       }
     }
 
-    const numSubMetadata = decodeVarint(this.buffer_!)
-    if (numSubMetadata === undefined) {
-      return false
-    }
-    if (numSubMetadata > this.buffer_!.remainingSize) {
+    const numSubMetadata = decodeVarint(this.buffer_)
+    if (numSubMetadata === undefined || numSubMetadata > this.buffer_.remainingSize) {
       return false
     }
     for (let i = 0; i < numSubMetadata; ++i) {
       // Sub-metadata name, then its block.
-      if (!this._skipName()) {
-        return false
-      }
-      if (!this._skipMetadata(level + 1)) {
+      if (!this._skipName() || !this._skipMetadata(level + 1)) {
         return false
       }
     }
@@ -75,35 +66,20 @@ class MetadataDecoder {
     return true
   }
 
-  // Skips a key-value entry: name then a length-prefixed value.
-  _skipEntry(): boolean {
-    if (!this._skipName()) {
-      return false
-    }
-    const dataSize = decodeVarint(this.buffer_!)
-    if (dataSize === undefined || dataSize === 0) {
-      return false
-    }
-    return this._skipBytes(dataSize)
-  }
-
   // Skips a name (uint8 length prefix followed by that many bytes).
   _skipName(): boolean {
-    const nameLen = this.buffer_!.decodeUint8()
+    const nameLen = this.buffer_.decodeUint8()
     if (nameLen === undefined) {
       return false
-    }
-    if (nameLen === 0) {
-      return true
     }
     return this._skipBytes(nameLen)
   }
 
   _skipBytes(size: number): boolean {
-    if (size > this.buffer_!.remainingSize) {
+    if (size > this.buffer_.remainingSize) {
       return false
     }
-    this.buffer_!.advance(size)
+    this.buffer_.advance(size)
     return true
   }
 }

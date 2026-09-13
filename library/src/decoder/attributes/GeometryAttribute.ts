@@ -15,25 +15,14 @@ const Type = {
 } as const
 
 class GeometryAttribute {
-  _buffer: DataBuffer | null
-  _numComponents: number
-  _dataType: number
-  _normalized: boolean
-  _byteStride: number
-  _byteOffset: number
-  _attributeType: number
-  _uniqueId: number
-
-  constructor() {
-    this._buffer = null
-    this._numComponents = 1
-    this._dataType = DataType.FLOAT32
-    this._normalized = false
-    this._byteStride = 0
-    this._byteOffset = 0
-    this._attributeType = Type.INVALID
-    this._uniqueId = 0
-  }
+  _buffer: DataBuffer | null = null
+  _numComponents = 1
+  _dataType: number = DataType.FLOAT32
+  _normalized = false
+  _byteStride = 0
+  _byteOffset = 0
+  _attributeType: number = Type.INVALID
+  _uniqueId = 0
 
   init(
     attributeType: number,
@@ -51,32 +40,6 @@ class GeometryAttribute {
     this._byteStride = byteStride
     this._byteOffset = byteOffset
     this._attributeType = attributeType
-  }
-
-  // Returns a Uint8Array view of the buffer starting at the attribute entry.
-  getAddress(attIndex: number): Uint8Array {
-    const bytePos = this._byteOffset + this._byteStride * attIndex
-    return this._buffer!.data.subarray(bytePos)
-  }
-
-  copyFrom(srcAtt: GeometryAttribute): boolean {
-    this._numComponents = srcAtt._numComponents
-    this._dataType = srcAtt._dataType
-    this._normalized = srcAtt._normalized
-    this._byteStride = srcAtt._byteStride
-    this._byteOffset = srcAtt._byteOffset
-    this._attributeType = srcAtt._attributeType
-    this._uniqueId = srcAtt._uniqueId
-
-    if (srcAtt._buffer === null) {
-      this._buffer = null
-    } else {
-      if (this._buffer === null) {
-        return false
-      }
-      this._buffer.update(srcAtt._buffer.data, srcAtt._buffer.dataSize)
-    }
-    return true
   }
 
   resetBuffer(buffer: DataBuffer, byteStride: number, byteOffset: number): void {

@@ -5,9 +5,8 @@ import { AttributeTransformData } from './AttributeTransformData'
 import type { DecoderBuffer } from '../core/DecoderBuffer'
 import type { PointAttribute } from './PointAttribute'
 
-class AttributeTransform {
-  // Virtual: override in subclass.
-  copyToAttributeTransformData(_outData: AttributeTransformData): void {}
+abstract class AttributeTransform {
+  abstract copyToAttributeTransformData(outData: AttributeTransformData): void
 
   transferToAttribute(attribute: PointAttribute): boolean {
     const transformData = new AttributeTransformData()
@@ -16,15 +15,9 @@ class AttributeTransform {
     return true
   }
 
-  // Virtual: override in subclass.
-  inverseTransformAttribute(_attribute: PointAttribute, _targetAttribute: PointAttribute): boolean {
-    return false
-  }
+  abstract inverseTransformAttribute(attribute: PointAttribute, targetAttribute: PointAttribute): boolean
 
-  // Virtual: override in subclass.
-  decodeParameters(_attribute: PointAttribute, _decoderBuffer: DecoderBuffer): boolean {
-    return false
-  }
+  abstract decodeParameters(attribute: PointAttribute, decoderBuffer: DecoderBuffer): boolean
 }
 
 export { AttributeTransform }

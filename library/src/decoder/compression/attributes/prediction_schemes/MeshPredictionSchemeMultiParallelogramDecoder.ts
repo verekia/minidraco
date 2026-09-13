@@ -3,10 +3,6 @@
 import { MeshPredictionSchemeDecoder } from './MeshPredictionSchemeDecoder'
 import { computeParallelogramPrediction } from './MeshPredictionSchemeParallelogramShared'
 
-import type { PointAttribute } from '../../../attributes/PointAttribute'
-import type { MeshPredictionSchemeData } from './MeshPredictionSchemeData'
-import type { PredictionSchemeDecodingTransform } from './PredictionSchemeDecoder'
-
 const kInvalidCornerIndex = -1
 
 /**
@@ -14,24 +10,12 @@ const kInvalidCornerIndex = -1
  * a vertex are averaged to produce the final prediction.
  */
 class MeshPredictionSchemeMultiParallelogramDecoder extends MeshPredictionSchemeDecoder {
-  constructor(
-    attribute: PointAttribute,
-    transform: PredictionSchemeDecodingTransform,
-    meshData: MeshPredictionSchemeData,
-  ) {
-    super(attribute, transform, meshData)
-  }
-
-  override isInitialized(): boolean {
-    return this._meshData.isInitialized()
-  }
-
   override computeOriginalValues(
     inCorr: Int32Array,
     outData: Int32Array,
-    size: number,
+    _size: number,
     numComponents: number,
-    entryToPointIdMap: Int32Array,
+    _entryToPointIdMap: Int32Array,
   ): boolean {
     this._transform.init(numComponents)
 

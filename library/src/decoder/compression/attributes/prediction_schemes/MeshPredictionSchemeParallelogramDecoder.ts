@@ -1,34 +1,21 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/MeshPredictionSchemeParallelogramDecoder.js (MIT)
 
-import { PredictionSchemeTransformType } from '../../config/CompressionShared'
 import { MeshPredictionSchemeDecoder } from './MeshPredictionSchemeDecoder'
 
-import type { PointAttribute } from '../../../attributes/PointAttribute'
-import type { MeshPredictionSchemeData } from './MeshPredictionSchemeData'
-import type { PredictionSchemeDecodingTransform } from './PredictionSchemeDecoder'
 import type { PredictionSchemeWrapDecodingTransform } from './PredictionSchemeWrapDecodingTransform'
 
 /**
  * Decoder for the standard parallelogram prediction: the parallelogram formed
  * by the triangle opposite the current corner predicts the attribute value.
+ *
+ * The factory only ever pairs this scheme with the wrap transform, whose
+ * corrections are zigzag-coded and never "positive", so the sequential decoder
+ * always takes the fused zigzag path below; there is no generic per-value
+ * transform path.
  */
 class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecoder {
-  constructor(
-    attribute: PointAttribute,
-    transform: PredictionSchemeDecodingTransform,
-    meshData: MeshPredictionSchemeData,
-  ) {
-    super(attribute, transform, meshData)
-  }
-
-  override isInitialized(): boolean {
-    return this._meshData.isInitialized()
-  }
-
   // Zigzag-fused variant: decodes corrections that are still in their unsigned
-  // zigzag form, unpacking each one inline. Only offered for the wrap
-  // transform (whose corrections are the only zigzag-coded ones this scheme
-  // sees); callers fall back to the standalone conversion pass otherwise.
+  // zigzag form, unpacking each one inline.
   override computeOriginalValuesZigzag(
     inCorr: Int32Array,
     outData: Int32Array,
@@ -37,78 +24,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     _entryToPointIdMap: Int32Array,
   ): boolean | undefined {
     this._transform.init(numComponents)
-    if (
-      !this._transform.getType ||
-      this._transform.getType() !== PredictionSchemeTransformType.PREDICTION_TRANSFORM_WRAP
-    ) {
-      return undefined // Not fusable; caller uses the two-pass path.
-    }
     return this._computeOriginalValuesWrap(inCorr, outData, numComponents, true)
-  }
-
-  override computeOriginalValues(
-    inCorr: Int32Array,
-    outData: Int32Array,
-    size: number,
-    numComponents: number,
-    entryToPointIdMap: Int32Array,
-  ): boolean {
-    this._transform.init(numComponents)
-
-    if (
-      this._transform.getType &&
-      this._transform.getType() === PredictionSchemeTransformType.PREDICTION_TRANSFORM_WRAP
-    ) {
-      return this._computeOriginalValuesWrap(inCorr, outData, numComponents, false)
-    }
-
-    const table = this._meshData.cornerTable
-    const vertexToDataMap = this._meshData.vertexToDataMap
-    // Flat connectivity arrays (Int32Array) for the per-value prediction loop.
-    const oppositeCorners = table.oppositeCornerArray() as Int32Array
-    const cornerToVertex = table.cornerToVertexArray() as Int32Array
-    const dataToCornerMap = this._meshData.dataToCornerMap
-
-    const predVals = new Int32Array(numComponents)
-
-    this._transform.computeOriginalValue(predVals, 0, inCorr, 0, outData, 0)
-
-    const cornerMapSize = dataToCornerMap.length
-    for (let p = 1; p < cornerMapSize; ++p) {
-      const cornerId = dataToCornerMap[p]
-      const dstOffset = p * numComponents
-
-      const oci = oppositeCorners[cornerId]
-      let hasPrediction = false
-      if (oci >= 0) {
-        const rem = oci - ((oci / 3) | 0) * 3
-        const nextOci = rem === 2 ? oci - 2 : oci + 1
-        const prevOci = rem === 0 ? oci + 2 : oci - 1
-
-        const vertOpp = vertexToDataMap[cornerToVertex[oci]]
-        const vertNext = vertexToDataMap[cornerToVertex[nextOci]]
-        const vertPrev = vertexToDataMap[cornerToVertex[prevOci]]
-
-        if (vertOpp < p && vertNext < p && vertPrev < p) {
-          const vOppOff = vertOpp * numComponents
-          const vNextOff = vertNext * numComponents
-          const vPrevOff = vertPrev * numComponents
-          for (let c = 0; c < numComponents; ++c) {
-            predVals[c] = outData[vNextOff + c] + outData[vPrevOff + c] - outData[vOppOff + c]
-          }
-          hasPrediction = true
-        }
-      }
-
-      if (!hasPrediction) {
-        // No parallelogram: fall back to delta from previous value.
-        const srcOffset = (p - 1) * numComponents
-        this._transform.computeOriginalValue(outData, srcOffset, inCorr, dstOffset, outData, dstOffset)
-      } else {
-        this._transform.computeOriginalValue(predVals, 0, inCorr, dstOffset, outData, dstOffset)
-      }
-    }
-    return true
   }
 
   // The wrap transform's corrections are zigzag-coded; with `zigzag` set the
