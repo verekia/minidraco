@@ -34,10 +34,17 @@ class SequentialAttributeDecoder {
     if (this._attribute!.numComponents <= 0) {
       return false
     }
-    if (!this._attribute!.reset(pointIds.length)) {
+    if (!this._resetAttribute(pointIds.length)) {
       return false
     }
     return this.decodeValues(pointIds, buffer)
+  }
+
+  // Sizes (and here allocates) the attribute's storage for numValues values;
+  // the integer decoders override it to skip the allocation, their values
+  // staying in the portable attribute (see PointAttribute.setLazyInteger).
+  _resetAttribute(numValues: number): boolean {
+    return this._attribute!.reset(numValues)
   }
 
   pendingSymbolStream(): PendingSymbolStream | null {

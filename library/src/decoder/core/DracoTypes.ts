@@ -1,22 +1,20 @@
 // Ported from draco.js src/core/DracoTypes.js (MIT)
 
-export const DataType = {
-  INVALID: 0,
-  INT8: 1,
-  UINT8: 2,
-  INT16: 3,
-  UINT16: 4,
-  INT32: 5,
-  UINT32: 6,
-  INT64: 7,
-  UINT64: 8,
-  FLOAT32: 9,
-  FLOAT64: 10,
-  BOOL: 11,
-  TYPES_COUNT: 12,
-} as const
-
-export type DataType = (typeof DataType)[keyof typeof DataType]
+export const enum DataType {
+  INVALID = 0,
+  INT8 = 1,
+  UINT8 = 2,
+  INT16 = 3,
+  UINT16 = 4,
+  INT32 = 5,
+  UINT32 = 6,
+  INT64 = 7,
+  UINT64 = 8,
+  FLOAT32 = 9,
+  FLOAT64 = 10,
+  BOOL = 11,
+  TYPES_COUNT = 12,
+}
 
 export function dataTypeLength(dt: number): number {
   switch (dt) {

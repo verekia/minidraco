@@ -22,7 +22,7 @@ class PointCloudDecoder {
   // Returns an error message, or '' on success (outHeader is then populated).
   static decodeHeader(buffer: DecoderBuffer, outHeader: DracoHeader): string {
     const kIoErrorMsg = 'Failed to parse Draco header.'
-    const bytes = buffer.decodeBytes(5)
+    const bytes = buffer.decodeBytesView(5)
     if (bytes === undefined) {
       return kIoErrorMsg
     }

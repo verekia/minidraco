@@ -1,6 +1,6 @@
 {
   "singleThreaded": {
-    "date": "2026-09-13",
+    "date": "2026-09-14",
     "runtime": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
     "benchmark": "raw decode, all decoders sync on main thread",
     "warmupRuns": 3,
@@ -11,9 +11,9 @@
         "primitives": 493,
         "faces": 77544,
         "medianMs": {
-          "minidraco": 22.3,
-          "draco.js": 33.1,
-          "draco3d (wasm)": 26.9
+          "minidraco": 23,
+          "draco.js": 33.5,
+          "draco3d (wasm)": 27.1
         }
       },
       {
@@ -21,8 +21,8 @@
         "primitives": 4,
         "faces": 24448,
         "medianMs": {
-          "minidraco": 3.2,
-          "draco.js": 4.9,
+          "minidraco": 2.9,
+          "draco.js": 4.8,
           "draco3d (wasm)": 4.4
         }
       },
@@ -31,9 +31,9 @@
         "primitives": 71,
         "faces": 141802,
         "medianMs": {
-          "minidraco": 64.6,
-          "draco.js": 82,
-          "draco3d (wasm)": 75.2
+          "minidraco": 67.7,
+          "draco.js": 82.5,
+          "draco3d (wasm)": 75.8
         }
       },
       {
@@ -41,8 +41,8 @@
         "primitives": 3,
         "faces": 13388,
         "medianMs": {
-          "minidraco": 3.8,
-          "draco.js": 5.3,
+          "minidraco": 3.7,
+          "draco.js": 5.2,
           "draco3d (wasm)": 4.8
         }
       },
@@ -51,8 +51,8 @@
         "primitives": 22,
         "faces": 32158,
         "medianMs": {
-          "minidraco": 4.4,
-          "draco.js": 6.5,
+          "minidraco": 4.2,
+          "draco.js": 6.6,
           "draco3d (wasm)": 5.6
         }
       },
@@ -61,7 +61,7 @@
         "primitives": 1,
         "faces": 4212,
         "medianMs": {
-          "minidraco": 0.7,
+          "minidraco": 0.8,
           "draco.js": 1.1,
           "draco3d (wasm)": 1.1
         }
@@ -71,9 +71,9 @@
         "primitives": 51,
         "faces": 358788,
         "medianMs": {
-          "minidraco": 54.7,
-          "draco.js": 76.8,
-          "draco3d (wasm)": 76.2
+          "minidraco": 50.2,
+          "draco.js": 77.7,
+          "draco3d (wasm)": 76.6
         }
       },
       {
@@ -81,7 +81,7 @@
         "primitives": 12,
         "faces": 10956,
         "medianMs": {
-          "minidraco": 2.1,
+          "minidraco": 2.2,
           "draco.js": 3.2,
           "draco3d (wasm)": 2.8
         }
@@ -91,9 +91,9 @@
         "primitives": 3,
         "faces": 21696,
         "medianMs": {
-          "minidraco": 2.9,
+          "minidraco": 2.7,
           "draco.js": 3.9,
-          "draco3d (wasm)": 3.4
+          "draco3d (wasm)": 3.3
         }
       },
       {
@@ -101,9 +101,9 @@
         "primitives": 43,
         "faces": 51601,
         "medianMs": {
-          "minidraco": 8.5,
-          "draco.js": 12.2,
-          "draco3d (wasm)": 11.2
+          "minidraco": 8,
+          "draco.js": 12.1,
+          "draco3d (wasm)": 11.3
         }
       },
       {
@@ -111,8 +111,8 @@
         "primitives": 4,
         "faces": 10457,
         "medianMs": {
-          "minidraco": 2.5,
-          "draco.js": 3.4,
+          "minidraco": 2.6,
+          "draco.js": 3.5,
           "draco3d (wasm)": 3.2
         }
       },
@@ -121,9 +121,9 @@
         "primitives": 1,
         "faces": 320352,
         "medianMs": {
-          "minidraco": 112.6,
-          "draco.js": 155.2,
-          "draco3d (wasm)": 136.6
+          "minidraco": 114.4,
+          "draco.js": 153.8,
+          "draco3d (wasm)": 133.3
         }
       },
       {
@@ -131,8 +131,8 @@
         "primitives": 2,
         "faces": 22280,
         "medianMs": {
-          "minidraco": 3.4,
-          "draco.js": 5,
+          "minidraco": 3.3,
+          "draco.js": 5.1,
           "draco3d (wasm)": 3.9
         }
       },
@@ -141,9 +141,9 @@
         "primitives": 24,
         "faces": 120336,
         "medianMs": {
-          "minidraco": 33.7,
-          "draco.js": 43.1,
-          "draco3d (wasm)": 39.4
+          "minidraco": 34,
+          "draco.js": 43.7,
+          "draco3d (wasm)": 39.6
         }
       },
       {
@@ -151,9 +151,9 @@
         "primitives": 5,
         "faces": 295600,
         "medianMs": {
-          "minidraco": 62.9,
-          "draco.js": 88.8,
-          "draco3d (wasm)": 77.9
+          "minidraco": 63.3,
+          "draco.js": 91,
+          "draco3d (wasm)": 78.7
         }
       },
       {
@@ -161,9 +161,9 @@
         "primitives": 1,
         "faces": 69451,
         "medianMs": {
-          "minidraco": 4.1,
-          "draco.js": 5.5,
-          "draco3d (wasm)": 4.1
+          "minidraco": 4.2,
+          "draco.js": 5.6,
+          "draco3d (wasm)": 4.2
         }
       },
       {
@@ -172,8 +172,8 @@
         "faces": 1744,
         "medianMs": {
           "minidraco": 0,
-          "draco.js": 1.8,
-          "draco3d (wasm)": 0.2
+          "draco.js": 2.3,
+          "draco3d (wasm)": 0.1
         }
       },
       {
@@ -183,13 +183,13 @@
         "medianMs": {
           "minidraco": 0.8,
           "draco.js": 1.1,
-          "draco3d (wasm)": 1
+          "draco3d (wasm)": 1.1
         }
       }
     ]
   },
   "multiThreaded": {
-    "date": "2026-09-13",
+    "date": "2026-09-14",
     "runtime": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
     "benchmark": "GLTFLoader wall clock; minidraco + wasm on 4-worker pools, draco.js main thread",
     "warmupRuns": 5,
@@ -198,127 +198,127 @@
       {
         "file": "manablade-bundle.glb",
         "medianMs": {
-          "minidraco": 16.6,
-          "draco.js": 41.9,
-          "draco3d (wasm)": 16.8
+          "minidraco": 16.5,
+          "draco.js": 41.4,
+          "draco3d (wasm)": 18.1
         }
       },
       {
         "file": "IridescentDishWithOlives.glb",
         "medianMs": {
-          "minidraco": 48,
-          "draco.js": 51.8,
-          "draco3d (wasm)": 46.4
+          "minidraco": 45.2,
+          "draco.js": 51.6,
+          "draco3d (wasm)": 45.3
         }
       },
       {
         "file": "LittlestTokyo.glb",
         "medianMs": {
-          "minidraco": 62.8,
-          "draco.js": 145.9,
-          "draco3d (wasm)": 64.9
+          "minidraco": 66.3,
+          "draco.js": 142.9,
+          "draco3d (wasm)": 62.8
         }
       },
       {
         "file": "ShaderBall2.glb",
         "medianMs": {
-          "minidraco": 12.1,
-          "draco.js": 17.6,
-          "draco3d (wasm)": 12
+          "minidraco": 11.7,
+          "draco.js": 17.2,
+          "draco3d (wasm)": 11.7
         }
       },
       {
         "file": "bath_day.glb",
         "medianMs": {
-          "minidraco": 32.7,
-          "draco.js": 39.2,
-          "draco3d (wasm)": 32.5
+          "minidraco": 32.5,
+          "draco.js": 39.1,
+          "draco3d (wasm)": 32.2
         }
       },
       {
         "file": "duck.glb",
         "medianMs": {
-          "minidraco": 1.4,
-          "draco.js": 2.2,
-          "draco3d (wasm)": 1.5
+          "minidraco": 1.2,
+          "draco.js": 2.1,
+          "draco3d (wasm)": 1.4
         }
       },
       {
         "file": "ferrari.glb",
         "medianMs": {
-          "minidraco": 18.7,
-          "draco.js": 78.8,
-          "draco3d (wasm)": 24.1
+          "minidraco": 19,
+          "draco.js": 77.5,
+          "draco3d (wasm)": 23.9
         }
       },
       {
         "file": "forest_house.glb",
         "medianMs": {
-          "minidraco": 19.7,
-          "draco.js": 22.5,
-          "draco3d (wasm)": 22.3
+          "minidraco": 18.6,
+          "draco.js": 22.3,
+          "draco3d (wasm)": 19.1
         }
       },
       {
         "file": "gears.glb",
         "medianMs": {
-          "minidraco": 1.7,
-          "draco.js": 4.4,
-          "draco3d (wasm)": 1.9
+          "minidraco": 1.5,
+          "draco.js": 4,
+          "draco3d (wasm)": 1.8
         }
       },
       {
         "file": "kira.glb",
         "medianMs": {
-          "minidraco": 191.8,
-          "draco.js": 200.4,
-          "draco3d (wasm)": 190
+          "minidraco": 187.3,
+          "draco.js": 196.4,
+          "draco3d (wasm)": 185.5
         }
       },
       {
         "file": "minimalistic_modern_bedroom.glb",
         "medianMs": {
           "minidraco": 24,
-          "draco.js": 27.5,
-          "draco3d (wasm)": 24.1
+          "draco.js": 27.4,
+          "draco3d (wasm)": 23.6
         }
       },
       {
         "file": "nemetona.glb",
         "medianMs": {
-          "minidraco": 130,
-          "draco.js": 185.4,
-          "draco3d (wasm)": 136.8
+          "minidraco": 127.9,
+          "draco.js": 181.5,
+          "draco3d (wasm)": 138.8
         }
       },
       {
         "file": "pool.glb",
         "medianMs": {
-          "minidraco": 34.7,
-          "draco.js": 40.6,
-          "draco3d (wasm)": 36.9
+          "minidraco": 34.9,
+          "draco.js": 40,
+          "draco3d (wasm)": 36
         }
       },
       {
         "file": "rolex.glb",
         "medianMs": {
-          "minidraco": 15.3,
-          "draco.js": 56.5,
-          "draco3d (wasm)": 19.8
+          "minidraco": 14.4,
+          "draco.js": 55.5,
+          "draco3d (wasm)": 20
         }
       },
       {
         "file": "venice_mask.glb",
         "medianMs": {
-          "minidraco": 53.7,
-          "draco.js": 136.3,
-          "draco3d (wasm)": 54.7
+          "minidraco": 52.7,
+          "draco.js": 139.1,
+          "draco3d (wasm)": 59.8
         }
       }
     ]
   },
   "coldLoad": {
-    "date": "2026-09-13",
+    "date": "2026-09-14",
     "runtime": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
     "benchmark": "GLTFLoader wall clock, fresh loader per trial preloaded 300 ms before the parse",
     "warmupRuns": 0,
@@ -327,121 +327,121 @@
       {
         "file": "manablade-bundle.glb",
         "medianMs": {
-          "minidraco": 55.7,
-          "draco.js": 73.4,
-          "draco3d (wasm)": 57.6
+          "minidraco": 57.7,
+          "draco.js": 51.4,
+          "draco3d (wasm)": 59.5
         }
       },
       {
         "file": "IridescentDishWithOlives.glb",
         "medianMs": {
-          "minidraco": 59.1,
-          "draco.js": 81.1,
-          "draco3d (wasm)": 81.9
+          "minidraco": 59.3,
+          "draco.js": 82,
+          "draco3d (wasm)": 72.6
         }
       },
       {
         "file": "LittlestTokyo.glb",
         "medianMs": {
-          "minidraco": 103.4,
-          "draco.js": 176.6,
-          "draco3d (wasm)": 94.3
+          "minidraco": 97,
+          "draco.js": 177.7,
+          "draco3d (wasm)": 95.9
         }
       },
       {
         "file": "ShaderBall2.glb",
         "medianMs": {
-          "minidraco": 25.2,
+          "minidraco": 24.3,
           "draco.js": 43.2,
-          "draco3d (wasm)": 34.9
+          "draco3d (wasm)": 35.8
         }
       },
       {
         "file": "bath_day.glb",
         "medianMs": {
-          "minidraco": 46.5,
-          "draco.js": 67.3,
-          "draco3d (wasm)": 57.2
+          "minidraco": 45.2,
+          "draco.js": 70.1,
+          "draco3d (wasm)": 62.2
         }
       },
       {
         "file": "duck.glb",
         "medianMs": {
-          "minidraco": 10.6,
-          "draco.js": 10.8,
-          "draco3d (wasm)": 28.0
+          "minidraco": 10.1,
+          "draco.js": 10.9,
+          "draco3d (wasm)": 28.4
         }
       },
       {
         "file": "ferrari.glb",
         "medianMs": {
-          "minidraco": 65.5,
-          "draco.js": 114.5,
-          "draco3d (wasm)": 58.1
+          "minidraco": 60.6,
+          "draco.js": 114.8,
+          "draco3d (wasm)": 62.5
         }
       },
       {
         "file": "forest_house.glb",
         "medianMs": {
-          "minidraco": 35.0,
-          "draco.js": 46.2,
-          "draco3d (wasm)": 50.7
+          "minidraco": 33.1,
+          "draco.js": 45.3,
+          "draco3d (wasm)": 43.8
         }
       },
       {
         "file": "gears.glb",
         "medianMs": {
-          "minidraco": 10.1,
-          "draco.js": 13.6,
-          "draco3d (wasm)": 27.3
+          "minidraco": 8.2,
+          "draco.js": 15.3,
+          "draco3d (wasm)": 23.8
         }
       },
       {
         "file": "kira.glb",
         "medianMs": {
-          "minidraco": 207.9,
-          "draco.js": 229.9,
-          "draco3d (wasm)": 226.9
+          "minidraco": 199.2,
+          "draco.js": 227.2,
+          "draco3d (wasm)": 226.5
         }
       },
       {
         "file": "minimalistic_modern_bedroom.glb",
         "medianMs": {
-          "minidraco": 36.1,
-          "draco.js": 53.6,
-          "draco3d (wasm)": 55.8
+          "minidraco": 35.5,
+          "draco.js": 56.5,
+          "draco3d (wasm)": 55.5
         }
       },
       {
         "file": "nemetona.glb",
         "medianMs": {
-          "minidraco": 175.6,
-          "draco.js": 216.7,
-          "draco3d (wasm)": 211.4
+          "minidraco": 166.4,
+          "draco.js": 212.7,
+          "draco3d (wasm)": 210.4
         }
       },
       {
         "file": "pool.glb",
         "medianMs": {
-          "minidraco": 48.5,
-          "draco.js": 68.9,
-          "draco3d (wasm)": 65.2
+          "minidraco": 48.1,
+          "draco.js": 68.4,
+          "draco3d (wasm)": 64.1
         }
       },
       {
         "file": "rolex.glb",
         "medianMs": {
-          "minidraco": 61.2,
-          "draco.js": 89.8,
-          "draco3d (wasm)": 62.5
+          "minidraco": 57.9,
+          "draco.js": 87.4,
+          "draco3d (wasm)": 57.4
         }
       },
       {
         "file": "venice_mask.glb",
         "medianMs": {
-          "minidraco": 124.3,
-          "draco.js": 169.8,
-          "draco3d (wasm)": 118.2
+          "minidraco": 119.3,
+          "draco.js": 168.3,
+          "draco3d (wasm)": 117.4
         }
       }
     ]
