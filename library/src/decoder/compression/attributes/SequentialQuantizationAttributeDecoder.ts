@@ -1,6 +1,6 @@
 // Ported from draco.js src/compression/attributes/SequentialQuantizationAttributeDecoder.js (MIT)
+// (with the AttributeQuantizationTransform parameters folded in)
 
-import { AttributeQuantizationTransform } from '../../attributes/AttributeQuantizationTransform'
 import { DataType } from '../../core/DracoTypes'
 import { SequentialIntegerAttributeDecoder } from './SequentialIntegerAttributeDecoder'
 
@@ -10,7 +10,9 @@ import type { PointCloudDecoder } from '../point_cloud/PointCloudDecoder'
 // Decoder for attribute values encoded with the
 // SequentialQuantizationAttributeEncoder.
 class SequentialQuantizationAttributeDecoder extends SequentialIntegerAttributeDecoder {
-  _quantizationTransform = new AttributeQuantizationTransform()
+  _quantizationBits = -1
+  _minValues: number[] = []
+  _range = 0
 
   override init(decoder: PointCloudDecoder, attributeId: number): boolean {
     if (!super.init(decoder, attributeId)) {
@@ -20,19 +22,34 @@ class SequentialQuantizationAttributeDecoder extends SequentialIntegerAttributeD
     return this.attribute!.dataType === DataType.FLOAT32
   }
 
+  // The quantization parameters (AttributeQuantizationTransform::DecodeParameters).
   override decodeDataNeededByPortableTransform(_pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    // The portable attribute is null only in backward-compatibility mode; fall
-    // back to the raw attribute.
-    const att = this.getPortableAttribute() ?? this.attribute!
-    if (!this._quantizationTransform.decodeParameters(att, buffer)) {
-      return false
+    const numComponents = this.attribute!.numComponents
+    this._minValues = new Array<number>(numComponents)
+    for (let i = 0; i < numComponents; i++) {
+      const val = buffer.decodeFloat32()
+      if (val === undefined) return false
+      this._minValues[i] = val
     }
-    return this._quantizationTransform.transferToAttribute(this._portableAttribute!)
+
+    const range = buffer.decodeFloat32()
+    if (range === undefined) return false
+    this._range = range
+
+    const qBits = buffer.decodeUint8()
+    if (qBits === undefined || qBits < 1 || qBits > 30) return false
+    this._quantizationBits = qBits
+    return true
   }
 
-  // Dequantize the values instead of a generic integer store.
+  // Dequantization is deferred to extractTo (see PointAttribute.setLazyQuantized).
   override _storeValues(_numValues: number): boolean {
-    return this._quantizationTransform.inverseTransformAttribute(this.getPortableAttribute()!, this.attribute!)
+    const maxQuantizedValue = ((1 << this._quantizationBits) >>> 0) - 1
+    if (maxQuantizedValue <= 0) return false
+    // C++ Dequantizer: delta = range / static_cast<float>(max_quantized_value).
+    const delta = Math.fround(this._range / Math.fround(maxQuantizedValue))
+    this.attribute!.setLazyQuantized(this._portableData, this._minValues, delta)
+    return true
   }
 }
 

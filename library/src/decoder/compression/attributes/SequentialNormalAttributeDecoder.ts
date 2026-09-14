@@ -1,6 +1,6 @@
 // Ported from draco.js src/compression/attributes/SequentialNormalAttributeDecoder.js (MIT)
+// (with the AttributeOctahedronTransform parameters folded in)
 
-import { AttributeOctahedronTransform } from '../../attributes/AttributeOctahedronTransform'
 import { DataType } from '../../core/DracoTypes'
 import { PredictionSchemeTransformType } from '../config/CompressionShared'
 import { createPredictionSchemeForDecoder } from './prediction_schemes/PredictionSchemeDecoderFactory'
@@ -14,7 +14,7 @@ import type { PredictionSchemeDecoderInterface } from './prediction_schemes/Pred
 
 // Decoder for attributes encoded with SequentialNormalAttributeEncoder.
 class SequentialNormalAttributeDecoder extends SequentialIntegerAttributeDecoder {
-  _octahedralTransform = new AttributeOctahedronTransform()
+  _quantizationBits = -1
 
   override init(decoder: PointCloudDecoder, attributeId: number): boolean {
     if (!super.init(decoder, attributeId)) {
@@ -29,15 +29,22 @@ class SequentialNormalAttributeDecoder extends SequentialIntegerAttributeDecoder
     return 2
   }
 
+  // The octahedral quantization bits (AttributeOctahedronTransform::DecodeParameters).
   override decodeDataNeededByPortableTransform(_pointIds: Int32Array, buffer: DecoderBuffer): boolean {
-    if (!this._octahedralTransform.decodeParameters(this.getPortableAttribute()!, buffer)) {
-      return false
-    }
-    return this._octahedralTransform.transferToAttribute(this._portableAttribute!)
+    const qBits = buffer.decodeUint8()
+    if (qBits === undefined) return false
+    this._quantizationBits = qBits
+    return true
   }
 
+  // The octahedral-to-unit-vector transform is deferred to extractTo (see
+  // PointAttribute.setLazyOctahedron).
   override _storeValues(_numPoints: number): boolean {
-    return this._octahedralTransform.inverseTransformAttribute(this.getPortableAttribute()!, this.attribute!)
+    const q = this._quantizationBits
+    if (q < 2 || q > 30) return false
+    // OctahedronToolBox: max_value = 2^q - 2, scale = 2 / float(max_value).
+    this.attribute!.setLazyOctahedron(this._portableData, Math.fround(2.0 / Math.fround((1 << q) - 2)))
+    return true
   }
 
   override createIntPredictionScheme(method: number, transformType: number): PredictionSchemeDecoderInterface | null {

@@ -15,10 +15,6 @@ import type { RAnsSymbolDecoder } from '../entropy/RAnsSymbolDecoder'
 import type { PredictionSchemeDecoderInterface } from './prediction_schemes/PredictionSchemeDecoderInterface'
 import type { PendingSymbolStream } from './SequentialAttributeDecoder'
 
-type IntTypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array
-
-type IntTypedArrayConstructor = new (buffer: ArrayBufferLike, byteOffset: number, length: number) => IntTypedArray
-
 // Decoder for attributes encoded with the SequentialIntegerAttributeEncoder.
 class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
   _predictionScheme: PredictionSchemeDecoderInterface | null = null
@@ -202,35 +198,22 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     return this.attribute!.numComponents
   }
 
-  // Stores decoded integer values into the attribute.
-  _storeValues(numValues: number): boolean {
-    const attribute = this.attribute!
-    const dt = attribute.dataType
-    const IntArray: IntTypedArrayConstructor | null =
-      dt === DataType.UINT8
-        ? Uint8Array
-        : dt === DataType.INT8
-          ? Int8Array
-          : dt === DataType.UINT16
-            ? Uint16Array
-            : dt === DataType.INT16
-              ? Int16Array
-              : dt === DataType.UINT32
-                ? Uint32Array
-                : dt === DataType.INT32
-                  ? Int32Array
-                  : null
-    if (IntArray === null) {
+  // The decoded values stay in the portable attribute; the final attribute
+  // only takes its size (see PointAttribute.setLazyInteger and the overrides
+  // in the quantization / normal decoders).
+  override _resetAttribute(numValues: number): boolean {
+    this.attribute!.resetLazy(numValues)
+    return true
+  }
+
+  // Hands the decoded integer values to the attribute, converted to its
+  // integer type on extraction.
+  _storeValues(_numValues: number): boolean {
+    const dt = this.attribute!.dataType
+    if (dt < DataType.INT8 || dt > DataType.UINT32) {
       return false
     }
-    const total = numValues * attribute.numComponents
-    if (total > 0) {
-      // TypedArray.set coerces per element to the target type -- same result as the
-      // per-entry byte copy, without per-value buffer.write() dispatch. dstAddr has
-      // byteOffset 0, so the typed view is aligned.
-      const dstData = attribute.buffer!.data
-      new IntArray(dstData.buffer, dstData.byteOffset + attribute.byteOffset, total).set(this._portableData!)
-    }
+    this.attribute!.setLazyInteger(this._portableData)
     return true
   }
 
@@ -247,10 +230,9 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     )
     const portAtt = new PointAttribute(ga)
     portAtt.setIdentityMapping()
-    // Scratch-backed: the portable attribute is consumed by
-    // transformAttributeToOriginalFormat and dropped with the decode, and
-    // decodeValues writes every one of its entries.
-    portAtt.resetScratch(numEntries)
+    // Heap-backed: the decoded values are what the final attribute hands out
+    // (see _storeValues), so they outlive the decode.
+    portAtt.reset(numEntries)
     portAtt.uniqueId = this.attribute!.uniqueId
     this._portableAttribute = portAtt
     // One Int32 view over the portable storage for the whole decode (the

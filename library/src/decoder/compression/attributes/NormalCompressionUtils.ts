@@ -84,7 +84,7 @@ class OctahedronToolBox {
   }
 
   // The octahedral -> unit vector direction (quantizedOctahedralCoordsToUnitVector
-  // in the source) lives inlined in AttributeOctahedronTransform.inverseTransformAttribute.
+  // in the source) lives inlined in PointAttribute._extractLazy.
 }
 
 export { OctahedronToolBox }
