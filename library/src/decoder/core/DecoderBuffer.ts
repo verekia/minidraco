@@ -82,13 +82,6 @@ export class DecoderBuffer {
     return val
   }
 
-  decodeInt8(): number | undefined {
-    if (this._pos + 1 > this._dataSize) return undefined
-    const val = this._dataView!.getInt8(this._pos)
-    this._pos += 1
-    return val
-  }
-
   decodeUint16(): number | undefined {
     if (this._pos + 2 > this._dataSize) return undefined
     const val = this._dataView!.getUint16(this._pos, true)
@@ -110,15 +103,8 @@ export class DecoderBuffer {
     return val
   }
 
-  decodeBytes(size: number): Uint8Array | undefined {
-    if (this._pos + size > this._dataSize) return undefined
-    const result = this._data!.slice(this._pos, this._pos + size)
-    this._pos += size
-    return result
-  }
-
-  // Zero-copy variant of decodeBytes: a view into the stream, only valid until
-  // the caller's next chance to mutate the buffer — copy out before keeping it.
+  // A view into the stream (no copy), only valid until the caller's next
+  // chance to mutate the buffer — copy out before keeping it.
   decodeBytesView(size: number): Uint8Array | undefined {
     if (this._pos + size > this._dataSize) return undefined
     const result = this._data!.subarray(this._pos, this._pos + size)

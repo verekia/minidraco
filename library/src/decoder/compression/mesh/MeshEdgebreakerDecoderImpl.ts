@@ -92,7 +92,9 @@ class MeshEdgebreakerDecoderImpl {
 
   createAttributesDecoder(attDecoderId: number): boolean {
     const buffer = this._decoder.buffer()!
-    const attDataId = buffer.decodeInt8()
+    // int8 in the bitstream.
+    let attDataId = buffer.decodeUint8()
+    if (attDataId !== undefined) attDataId = (attDataId << 24) >> 24
     if (attDataId === undefined) return false
 
     const decoderType = buffer.decodeUint8()
@@ -606,8 +608,8 @@ class MeshEdgebreakerDecoderImpl {
   // Returns the updated decoded-face count, or -1 on malformed input.
   _decodeStartFaces(activeCornerStack: Int32Array, activeCornerStackSize: number, numFacesDecoded: number): number {
     const ct = this._cornerTable!
-    const cornerToVertex = ct._cornerToVertex!
     const oppositeCorners = ct._oppositeCorners!
+    const cornerToVertex = ct._cornerToVertex!
     const vertexCorners = ct._vertexCorners!
     const isVertHole = this._isVertHole
     const traversalDecoder = this._traversalDecoder
@@ -680,26 +682,9 @@ class MeshEdgebreakerDecoderImpl {
   _removeInvalidVertices(invalidVertices: number[]): number {
     const ct = this._cornerTable!
     const cornerToVertex = ct._cornerToVertex!
-    const oppositeCorners = ct._oppositeCorners!
     const vertexCorners = ct._vertexCorners!
     const isVertHole = this._isVertHole
-    const numCorners = ct.numCorners()
-
-    const next = (c: number): number => (c < 0 ? -1 : c % 3 === 2 ? c - 2 : c + 1)
-    const prev = (c: number): number => (c < 0 ? -1 : c % 3 === 0 ? c + 2 : c - 1)
-    const vertex = (c: number): number => (c < 0 || c >= numCorners ? -1 : cornerToVertex[c])
-    const opposite = (c: number): number => (c < 0 || c >= numCorners ? -1 : oppositeCorners[c])
     const leftMostCorner = (v: number): number => (v < 0 || v >= vertexCorners.length ? -1 : vertexCorners[v])
-    const swingLeft = (c: number): number => {
-      const n = next(c)
-      const o = opposite(n)
-      return o < 0 ? -1 : next(o)
-    }
-    const swingRight = (c: number): number => {
-      const p = prev(c)
-      const o = opposite(p)
-      return o < 0 ? -1 : prev(o)
-    }
 
     let numVertices = ct.numVertices()
     for (let ivIdx = 0; ivIdx < invalidVertices.length; ++ivIdx) {
@@ -716,23 +701,23 @@ class MeshEdgebreakerDecoderImpl {
       let cid = startCid
       let leftTraversal = true
       while (cid !== kInvalidCornerIndex) {
-        if (vertex(cid) !== srcVert) {
+        if (ct.vertex(cid) !== srcVert) {
           return -1
         }
         cornerToVertex[cid] = invalidVert
         if (leftTraversal) {
-          const nextC = swingLeft(cid)
+          const nextC = ct.swingLeft(cid)
           if (nextC === kInvalidCornerIndex) {
             // Open boundary reached; switch to right traversal from start.
             leftTraversal = false
-            cid = swingRight(startCid)
+            cid = ct.swingRight(startCid)
           } else if (nextC === startCid) {
             break // closed fan
           } else {
             cid = nextC
           }
         } else {
-          cid = swingRight(cid)
+          cid = ct.swingRight(cid)
         }
       }
 

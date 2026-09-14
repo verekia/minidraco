@@ -127,7 +127,7 @@ class PointAttribute extends GeometryAttribute {
   }
 
   // Quantized float values: value * delta + min per component (float32
-  // arithmetic, see _extractLazy), as the C++ Dequantizer computes them.
+  // arithmetic, see _extractQuantized), as the C++ Dequantizer computes them.
   setLazyQuantized(values: Int32Array | null, minValues: number[], delta: number): void {
     this._lazyKind = LAZY_QUANTIZED
     this._lazyValues = values
@@ -136,7 +136,7 @@ class PointAttribute extends GeometryAttribute {
   }
 
   // Octahedral normals: two quantized coordinates per value, dequantized by
-  // `scale` and turned into unit vectors (see _extractLazy).
+  // `scale` and turned into unit vectors (see _extractOctahedron).
   setLazyOctahedron(values: Int32Array | null, scale: number): void {
     this._lazyKind = LAZY_OCTAHEDRON
     this._lazyValues = values
@@ -221,34 +221,16 @@ class PointAttribute extends GeometryAttribute {
   // naturally aligned, so every type reads through a typed-array view instead
   // of a per-component DataView dispatch.
   convertValue(attIndex: number, outVal: number[] | Int32Array | Uint32Array | Float32Array | Float64Array): void {
-    const bytePos = this._byteOffset + this._byteStride * attIndex
     const bufData = this._buffer!.data
-    const dt = this._dataType
     const nc = this._numComponents
-
-    // INT32 fast path: portable attrs are INT32, read per-corner by the
-    // geometric-normal / texcoords predictors.
-    if (dt === DataType.INT32) {
-      const view = this._view(Int32Array, bufData)
-      const baseIndex = (bufData.byteOffset + bytePos) >> 2
-      for (let i = 0; i < nc; ++i) {
-        outVal[i] = view[baseIndex + i]
-      }
-      return
-    }
-
-    const Ctor = viewCtorFor(dt)
+    const Ctor = viewCtorFor(this._dataType)
     if (Ctor === null) {
-      for (let i = 0; i < nc; ++i) {
-        outVal[i] = 0
-      }
+      for (let i = 0; i < nc; ++i) outVal[i] = 0
       return
     }
     const view = this._view(Ctor, bufData)
-    const baseIndex = (bufData.byteOffset + bytePos) / Ctor.BYTES_PER_ELEMENT
-    for (let i = 0; i < nc; ++i) {
-      outVal[i] = view[baseIndex + i]
-    }
+    const baseIndex = (bufData.byteOffset + this._byteOffset + this._byteStride * attIndex) / Ctor.BYTES_PER_ELEMENT
+    for (let i = 0; i < nc; ++i) outVal[i] = view[baseIndex + i]
   }
 
   // Flat-array extraction of all values into one output typed array, in point
@@ -262,8 +244,13 @@ class PointAttribute extends GeometryAttribute {
     if (numPoints === 0) {
       return array
     }
-    if (this._lazyKind !== LAZY_NONE) {
-      if (this._lazyValues !== null) this._extractLazy(array, numPoints)
+    const kind = this._lazyKind
+    if (kind !== LAZY_NONE) {
+      if (this._lazyValues !== null) {
+        if (kind === LAZY_QUANTIZED) this._extractQuantized(array, numPoints)
+        else if (kind === LAZY_OCTAHEDRON) this._extractOctahedron(array, numPoints)
+        else this._extractInteger(array, numPoints)
+      }
       return array
     }
     const Ctor = viewCtorFor(this._dataType)
@@ -299,111 +286,117 @@ class PointAttribute extends GeometryAttribute {
     return array
   }
 
-  // The deferred transforms, fused with the point-order gather. Every float
-  // step is rounded to float32 exactly where the C++ decoder's float
-  // arithmetic rounds (Dequantizer, OctahedronToolBox), so the values are
-  // bit-identical to the reference decoder whatever the output array type.
-  //
+  // The deferred transforms, each fused with the point-order gather. One
+  // function per transform so the engine tiers each up on its own complete
+  // type feedback (a single body for all three deoptimized once per newly
+  // seen kind, which made the first decodes of a session measurably slower).
+  // Every float step is rounded to float32 exactly where the C++ decoder's
+  // float arithmetic rounds (Dequantizer, OctahedronToolBox), so the values
+  // are bit-identical to the reference decoder whatever the output array type.
+
+  // Point -> value index; the identity mapping (sequential meshes) gets a
+  // plain iota so the loops carry no per-point branch.
+  _lazyMap(numPoints: number): Uint32Array {
+    if (!this._identityMapping) return this._indicesMap as Uint32Array
+    const map = new Uint32Array(numPoints)
+    for (let p = 0; p < numPoints; ++p) map[p] = p
+    return map
+  }
+
   // The C++ starts from static_cast<float>(value). An integer below 2^24 is
   // exact as a float32 and its product with a float32 is exact as a double,
   // so for such values `fround(value * scale)` is that float32 product
   // without the (measurably costly) int-to-float32-to-double round trip per
   // component. Larger values (quantization above 24 bits, never seen in
-  // practice) are rounded in place once, after which the same holds.
-  _extractLazy(out: ExtractTypedArray, numPoints: number): void {
+  // practice) are rounded in place once here, after which the same holds.
+  _lazyFloatValues(): Int32Array {
     const values = this._lazyValues!
+    for (let i = 0; i < values.length; ++i) {
+      if (values[i] >= 0x1000000 || values[i] <= -0x1000000) {
+        for (let j = 0; j < values.length; ++j) values[j] = Math.fround(values[j])
+        break
+      }
+    }
+    return values
+  }
+
+  // C++ Dequantizer: float(value) * delta + min, all in float32.
+  _extractQuantized(out: ExtractTypedArray, numPoints: number): void {
+    const values = this._lazyFloatValues()
+    const map = this._lazyMap(numPoints)
     const numComponents = this._numComponents
-    const kind = this._lazyKind
     const fround = Math.fround
-    // Point -> value index; the identity mapping (sequential meshes) gets a
-    // plain iota so the loops below carry no per-point branch.
-    let map = this._indicesMap as Uint32Array
-    if (this._identityMapping) {
-      map = new Uint32Array(numPoints)
-      for (let p = 0; p < numPoints; ++p) map[p] = p
-    }
-
-    if (kind === LAZY_QUANTIZED || kind === LAZY_OCTAHEDRON) {
-      let needsRounding = false
-      for (let i = 0; i < values.length; ++i) {
-        if (values[i] >= 0x1000000 || values[i] <= -0x1000000) {
-          needsRounding = true
-          break
-        }
-      }
-      if (needsRounding) {
-        for (let i = 0; i < values.length; ++i) values[i] = fround(values[i])
-      }
-    }
-
-    if (kind === LAZY_QUANTIZED) {
-      // C++ Dequantizer: float(value) * delta + min, all in float32.
-      const delta = this._lazyScale
-      const min = this._lazyMin
-      if (numComponents === 3) {
-        const m0 = min[0]
-        const m1 = min[1]
-        const m2 = min[2]
-        for (let p = 0, d = 0; p < numPoints; ++p, d += 3) {
-          const s = map[p] * 3
-          out[d] = fround(fround(values[s] * delta) + m0)
-          out[d + 1] = fround(fround(values[s + 1] * delta) + m1)
-          out[d + 2] = fround(fround(values[s + 2] * delta) + m2)
-        }
-        return
-      }
-      if (numComponents === 2) {
-        const m0 = min[0]
-        const m1 = min[1]
-        for (let p = 0, d = 0; p < numPoints; ++p, d += 2) {
-          const s = map[p] * 2
-          out[d] = fround(fround(values[s] * delta) + m0)
-          out[d + 1] = fround(fround(values[s + 1] * delta) + m1)
-        }
-        return
-      }
-      for (let p = 0, d = 0; p < numPoints; ++p) {
-        const s = map[p] * numComponents
-        for (let c = 0; c < numComponents; ++c) {
-          out[d++] = fround(fround(values[s + c] * delta) + min[c])
-        }
-      }
-      return
-    }
-
-    if (kind === LAZY_OCTAHEDRON) {
-      // OctahedronToolBox.QuantizedOctahedralCoordsToUnitVector, two
-      // quantized coordinates per value to one unit vector per point.
-      const scale = this._lazyScale
+    const delta = this._lazyScale
+    const min = this._lazyMin
+    if (numComponents === 3) {
+      const m0 = min[0]
+      const m1 = min[1]
+      const m2 = min[2]
       for (let p = 0, d = 0; p < numPoints; ++p, d += 3) {
-        const s = map[p] * 2
-        let y = fround(fround(values[s] * scale) - 1.0)
-        let z = fround(fround(values[s + 1] * scale) - 1.0)
-        const x = fround(fround(1.0 - Math.abs(y)) - Math.abs(z))
-
-        let xOffset = -x
-        if (xOffset < 0) xOffset = 0
-
-        y = fround(y + (y < 0 ? xOffset : -xOffset))
-        z = fround(z + (z < 0 ? xOffset : -xOffset))
-
-        const normSquared = fround(fround(fround(x * x) + fround(y * y)) + fround(z * z))
-        if (normSquared < 1e-6) {
-          out[d] = 0
-          out[d + 1] = 0
-          out[d + 2] = 0
-        } else {
-          const k = fround(1.0 / fround(Math.sqrt(normSquared)))
-          out[d] = fround(x * k)
-          out[d + 1] = fround(y * k)
-          out[d + 2] = fround(z * k)
-        }
+        const s = map[p] * 3
+        out[d] = fround(fround(values[s] * delta) + m0)
+        out[d + 1] = fround(fround(values[s + 1] * delta) + m1)
+        out[d + 2] = fround(fround(values[s + 2] * delta) + m2)
       }
       return
     }
+    if (numComponents === 2) {
+      const m0 = min[0]
+      const m1 = min[1]
+      for (let p = 0, d = 0; p < numPoints; ++p, d += 2) {
+        const s = map[p] * 2
+        out[d] = fround(fround(values[s] * delta) + m0)
+        out[d + 1] = fround(fround(values[s + 1] * delta) + m1)
+      }
+      return
+    }
+    for (let p = 0, d = 0; p < numPoints; ++p) {
+      const s = map[p] * numComponents
+      for (let c = 0; c < numComponents; ++c) {
+        out[d++] = fround(fround(values[s + c] * delta) + min[c])
+      }
+    }
+  }
 
-    // LAZY_INTEGER: the int32 values wrap to the attribute's own integer type
-    // (as storing them into it would) before the output store converts them.
+  // OctahedronToolBox.QuantizedOctahedralCoordsToUnitVector, two quantized
+  // coordinates per value to one unit vector per point.
+  _extractOctahedron(out: ExtractTypedArray, numPoints: number): void {
+    const values = this._lazyFloatValues()
+    const map = this._lazyMap(numPoints)
+    const fround = Math.fround
+    const scale = this._lazyScale
+    for (let p = 0, d = 0; p < numPoints; ++p, d += 3) {
+      const s = map[p] * 2
+      let y = fround(fround(values[s] * scale) - 1.0)
+      let z = fround(fround(values[s + 1] * scale) - 1.0)
+      const x = fround(fround(1.0 - Math.abs(y)) - Math.abs(z))
+
+      let xOffset = -x
+      if (xOffset < 0) xOffset = 0
+
+      y = fround(y + (y < 0 ? xOffset : -xOffset))
+      z = fround(z + (z < 0 ? xOffset : -xOffset))
+
+      const normSquared = fround(fround(fround(x * x) + fround(y * y)) + fround(z * z))
+      if (normSquared < 1e-6) {
+        out[d] = 0
+        out[d + 1] = 0
+        out[d + 2] = 0
+      } else {
+        const k = fround(1.0 / fround(Math.sqrt(normSquared)))
+        out[d] = fround(x * k)
+        out[d + 1] = fround(y * k)
+        out[d + 2] = fround(z * k)
+      }
+    }
+  }
+
+  // The int32 values wrap to the attribute's own integer type (as storing
+  // them into it would) before the output store converts them.
+  _extractInteger(out: ExtractTypedArray, numPoints: number): void {
+    const values = this._lazyValues!
+    const map = this._lazyMap(numPoints)
+    const numComponents = this._numComponents
     const dt = this._dataType
     const shift = 32 - 8 * dataTypeLength(dt)
     const signed = dt === DataType.INT8 || dt === DataType.INT16 || dt === DataType.INT32

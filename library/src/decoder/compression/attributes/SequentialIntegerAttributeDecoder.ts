@@ -55,7 +55,9 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
   override decodeValues(pointIds: Int32Array, buffer: DecoderBuffer): boolean {
     this._finishPointIds = pointIds
 
-    const predictionSchemeMethod = buffer.decodeInt8()
+    // int8 in the bitstream.
+    let predictionSchemeMethod = buffer.decodeUint8()
+    if (predictionSchemeMethod !== undefined) predictionSchemeMethod = (predictionSchemeMethod << 24) >> 24
     if (predictionSchemeMethod === undefined) return false
 
     if (
@@ -66,7 +68,8 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     }
 
     if (predictionSchemeMethod !== PredictionSchemeMethod.PREDICTION_NONE) {
-      const predictionTransformType = buffer.decodeInt8()
+      let predictionTransformType = buffer.decodeUint8()
+      if (predictionTransformType !== undefined) predictionTransformType = (predictionTransformType << 24) >> 24
       if (predictionTransformType === undefined) return false
 
       if (

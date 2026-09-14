@@ -93,16 +93,17 @@ export class RAnsDecoder {
   ransPrecision: number
   ransPrecisionMask: number
   lRansBase: number
-  lutTable: Uint16Array | Uint32Array | null = null
+  lutTable: Uint16Array | null = null
   probTable: Uint32Array | null = null // flat
   cumProbTable: Uint32Array | null = null // flat
-  // Short-stream mode (see ransBuildLookUpTable): no full-precision lut; a
+  // Coarse mode (see ransBuildLookUpTable): no full-precision lut; a
   // 256-entry bucket table narrows each lookup to a symbol range that a short
   // cumProb scan finishes. cumProbTable then carries one extra trailing entry
   // (== ransPrecision) so the scan needs no bounds check.
   coarse = false
   bucketShift = 0
-  bucketTable: Uint16Array | null = null
+  // Uint16 unless the alphabet needs wider ids, so real streams keep one table type.
+  bucketTable: Uint16Array | Uint32Array | null = null
   // Stream state inlined (not a nested AnsDecoder) so the ransRead() hot loop
   // touches own props; initialized by ansReadInit.
   buf: Uint8Array | null = null
@@ -167,21 +168,12 @@ export class RAnsDecoder {
 
   // Batch ransRead() into out[0..count): all fields hoisted to locals, state
   // written back once. Removes per-symbol property reads and call indirection.
-  // lutTable's element type varies per decoder (Uint16/32 by symbol count),
-  // which would make the hot lutTable[rem] access site polymorphic — dispatch
-  // once here so each loop body stays monomorphic on its concrete type. The
-  // two bodies are intentionally identical copies.
   decodeSymbols(out: Uint32Array, count: number): void {
     if (this.coarse) {
       this._decodeSymbolsCoarse(out, count)
       return
     }
-    const lutTable = this.lutTable!
-    if (lutTable instanceof Uint16Array) {
-      this._decodeSymbolsU16(out, count, lutTable)
-    } else {
-      this._decodeSymbolsU32(out, count, lutTable)
-    }
+    this._decodeSymbolsU16(out, count, this.lutTable!)
   }
 
   _decodeSymbolsU16(out: Uint32Array, count: number, lutTable: Uint16Array): void {
@@ -235,29 +227,6 @@ export class RAnsDecoder {
     this.bufOffset = bufOffset
   }
 
-  _decodeSymbolsU32(out: Uint32Array, count: number, lutTable: Uint32Array): void {
-    const buf = this.buf!
-    const lRansBase = this.lRansBase
-    const ransPrecisionBits = this.ransPrecisionBits
-    const ransPrecisionMask = this.ransPrecisionMask
-    const probTable = this.probTable!
-    const cumProbTable = this.cumProbTable!
-    let state = this.state
-    let bufOffset = this.bufOffset
-    const bufStart = this.bufStart
-    for (let i = 0; i < count; ++i) {
-      while (state < lRansBase && bufOffset > bufStart) {
-        state = (state << 8) | buf[--bufOffset]
-      }
-      const rem = state & ransPrecisionMask
-      const symbol = lutTable[rem]
-      out[i] = symbol
-      state = (state >>> ransPrecisionBits) * probTable[symbol] + rem - cumProbTable[symbol]
-    }
-    this.state = state
-    this.bufOffset = bufOffset
-  }
-
   // Builds the decoding tables. Returns false on bad input data.
   //
   // expectedCount is how many symbols the caller will decode from this stream.
@@ -267,10 +236,13 @@ export class RAnsDecoder {
   // get a coarse 256-entry bucket table (symbol at the start of each
   // precision/256-wide bucket) and finish each lookup with a scan of the
   // cumulative probabilities; long streams keep the exact lut, whose per-symbol
-  // cost is lower.
+  // cost is lower. The coarse tables also serve an alphabet wider than a
+  // Uint16 lut entry (raw symbol coding allows 2^18 symbols; no real file
+  // has been seen past 2^14), rather than keeping a Uint32 copy of every
+  // lut loop for it.
   ransBuildLookUpTable(tokenProbs: Uint32Array, numSymbols: number, expectedCount: number = 0x7fffffff): boolean {
     const ransPrecision = this.ransPrecision
-    const coarse = numSymbols <= 65535 && expectedCount * COARSE_STREAM_FACTOR < ransPrecision
+    const coarse = numSymbols > 65536 || expectedCount * COARSE_STREAM_FACTOR < ransPrecision
     this.coarse = coarse
     // Pooled buffers may be oversized; every slot in the used range is written
     // below (cumProb must land exactly on ransPrecision), so no clearing needed.
@@ -296,7 +268,10 @@ export class RAnsDecoder {
       }
       cumProbTable[numSymbols] = ransPrecision
       const bucketShift = this.ransPrecisionBits - COARSE_BUCKET_BITS
-      const bucketTable = acquirePooled(Uint16Array, 1 << COARSE_BUCKET_BITS)
+      const bucketTable =
+        numSymbols > 65536
+          ? acquirePooled(Uint32Array, 1 << COARSE_BUCKET_BITS)
+          : acquirePooled(Uint16Array, 1 << COARSE_BUCKET_BITS)
       this.bucketShift = bucketShift
       this.bucketTable = bucketTable
       let symbol = 0
@@ -310,12 +285,10 @@ export class RAnsDecoder {
 
     // lutTable is indexed by `rem` (random in [0, ransPrecision)), so it's the
     // hottest random read in decodeSymbols()/ransRead(). Its values are symbol
-    // ids (< numSymbols): Uint16 holds every alphabet a real stream uses (the
-    // rare wider one gets Uint32). A Uint8 table for the smallest alphabets
+    // ids (< numSymbols <= 65536). A Uint8 table for the smallest alphabets
     // measured no faster -- those have the smallest precision, so either table
     // sits in L1 -- and would double the lockstep loop variants below.
-    const LutArray = numSymbols <= 65536 ? Uint16Array : Uint32Array
-    const lutTable = acquirePooled(LutArray as new (length: number) => Uint16Array, ransPrecision)
+    const lutTable = acquirePooled(Uint16Array, ransPrecision)
     this.lutTable = lutTable
     let actProb = 0
     for (let i = 0; i < numSymbols; ++i) {
@@ -344,9 +317,8 @@ export class RAnsDecoder {
   }
 }
 
-// Pairing entry: the lockstep loop for two Uint16-lut streams (keeping its
-// hot lut access sites monomorphic), or sequential decodes when either
-// stream has the rare huge-alphabet Uint32 lut.
+// Pairing entry: the lockstep loop for two lut streams, or sequential decodes
+// when either stream uses the coarse tables.
 export function ransDecodeSymbolsPair(
   a: RAnsDecoder,
   outA: Uint32Array,
@@ -355,7 +327,7 @@ export function ransDecodeSymbolsPair(
   outB: Uint32Array,
   countB: number,
 ): void {
-  if (a.lutTable instanceof Uint16Array && b.lutTable instanceof Uint16Array) {
+  if (!a.coarse && !b.coarse) {
     ransDecodeSymbolsPairU16(a, outA, countA, b, outB, countB)
   } else {
     a.decodeSymbols(outA, countA)

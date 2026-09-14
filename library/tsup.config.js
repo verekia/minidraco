@@ -1,14 +1,15 @@
 import { defineConfig } from 'tsup'
 
-// Properties named with a leading underscore are internal by convention and
-// get mangled in the dist output (about 5% off the brotli size). The only
-// underscore members meant for subclasses — `_decodeBuffer` / `_buildGeometry`,
-// the synchronous decode hooks a custom loader may override — keep their names.
-// The .d.ts files still describe the unmangled internals; treat everything
-// else with an underscore as private.
+// Properties named with a leading underscore (or, draco.js-style, a trailing
+// one) are internal by convention and get mangled in the dist output (about
+// 5% off the brotli size). The only underscore members meant for callers keep
+// their names: `_decodeBuffer` / `_buildGeometry`, the synchronous decode
+// hooks a custom loader may override, and the decoded mesh's `faces_` and
+// `attributes_` lists. The .d.ts files still describe the unmangled
+// internals; treat everything else with an underscore as private.
 const mangleInternals = options => {
-  options.mangleProps = /^_/
-  options.reserveProps = /^_(decodeBuffer|buildGeometry)$/
+  options.mangleProps = /^_|_$/
+  options.reserveProps = /^_(decodeBuffer|buildGeometry)$|^(faces|attributes)_$/
 }
 
 // Two separate builds instead of one multi-entry build: when entries share

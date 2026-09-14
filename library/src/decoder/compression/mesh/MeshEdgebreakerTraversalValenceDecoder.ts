@@ -130,12 +130,11 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     }
 
     // Decode three streams in lockstep while possible (the six contexts make
-    // two clean trios), then pairs, then a lone leftover. Only Uint16-lut
-    // streams take part: short streams that chose the coarse tables (see
-    // ransBuildLookUpTable) and Uint32 luts (never produced for these
-    // alphabets) decode alone, without dragging the big streams out of the
-    // lockstep loops.
-    const lockstep = pending.filter(entry => entry.decoder.ans_.lutTable instanceof Uint16Array)
+    // two clean trios), then pairs, then a lone leftover. Only lut streams
+    // take part: short streams that chose the coarse tables (see
+    // ransBuildLookUpTable) decode alone, without dragging the big streams
+    // out of the lockstep loops.
+    const lockstep = pending.filter(entry => !entry.decoder.ans_.coarse)
     let p = 0
     while (lockstep.length - p >= 3) {
       const a = lockstep[p]
@@ -164,7 +163,7 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
       lockstep[p].decoder.ans_.decodeSymbols(lockstep[p].out, lockstep[p].count)
     }
     for (const entry of pending) {
-      if (!(entry.decoder.ans_.lutTable instanceof Uint16Array)) {
+      if (entry.decoder.ans_.coarse) {
         entry.decoder.ans_.decodeSymbols(entry.out, entry.count)
       }
       entry.decoder.endDecoding()

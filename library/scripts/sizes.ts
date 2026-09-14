@@ -61,8 +61,8 @@ const kb = (bytes: number): string => `${Math.round(bytes / 1000)} KB`
 // the other side is a sum of separately rounded downloads.
 const versus = (mini: number, other: number, shown: string = kb(other)): string => {
   const ratio = other / mini
-  if (ratio >= 1.03) return `🟢 ${ratio.toFixed(1)}× smaller (${shown})`
-  if (ratio <= 1 / 1.03) return `🔴 ${(1 / ratio).toFixed(1)}× larger (${shown})`
+  if (ratio >= 1.03) return `🟢 ${ratio.toFixed(2)}× smaller (${shown})`
+  if (ratio <= 1 / 1.03) return `🔴 ${(1 / ratio).toFixed(2)}× larger (${shown})`
   return `⚪ even (${shown})`
 }
 
