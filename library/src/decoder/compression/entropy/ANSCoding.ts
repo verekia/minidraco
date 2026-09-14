@@ -76,10 +76,7 @@ export function ansReadInit(
 // just unpooled.
 const tablePool: (Uint16Array | Uint32Array)[] = []
 
-const acquirePooled = <T extends Uint16Array | Uint32Array>(
-  Ctor: new (length: number) => T,
-  size: number,
-): T => {
+const acquirePooled = <T extends Uint16Array | Uint32Array>(Ctor: new (length: number) => T, size: number): T => {
   for (let i = tablePool.length - 1; i >= 0; --i) {
     const buf = tablePool[i]
     if (buf.constructor === Ctor && buf.length >= size) {

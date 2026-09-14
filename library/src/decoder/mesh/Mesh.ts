@@ -2,11 +2,11 @@
 
 import { PointCloud } from '../point_cloud/PointCloud'
 
-export const MeshAttributeElementType = {
-  MESH_VERTEX_ATTRIBUTE: 0,
-  MESH_CORNER_ATTRIBUTE: 1,
-  MESH_FACE_ATTRIBUTE: 2,
-} as const
+export const enum MeshAttributeElementType {
+  MESH_VERTEX_ATTRIBUTE = 0,
+  MESH_CORNER_ATTRIBUTE = 1,
+  MESH_FACE_ATTRIBUTE = 2,
+}
 
 class Mesh extends PointCloud {
   // Flat Int32Array, 3 point indices per face, for cache locality and to avoid

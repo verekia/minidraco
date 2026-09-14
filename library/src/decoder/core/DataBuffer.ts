@@ -16,7 +16,6 @@ export class DataBuffer {
     this._data.set(data.length === size ? data : data.subarray(0, size))
   }
 
-
   // The caller passes a Uint8Array of exactly dataSize bytes in the common
   // case; avoid allocating a wrapper view per value (dominates storage time /
   // GC pressure).

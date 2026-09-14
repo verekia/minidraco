@@ -340,9 +340,11 @@ class MinidracoLoader extends Loader<BufferGeometry> {
       })
     }
 
-    const numFaces = dracoGeometry.numFaces()
-    const indices = new Uint32Array(numFaces * 3)
-    indices.set(dracoGeometry.faces_.subarray(0, numFaces * 3))
+    // The face buffer is fresh per decode and holds non-negative point ids,
+    // so its bytes are handed over as the Uint32 index array (as the worker
+    // does) rather than copied.
+    const faces = dracoGeometry.faces_
+    const indices = new Uint32Array(faces.buffer, faces.byteOffset, dracoGeometry.numFaces() * 3)
 
     return this._buildGeometryFromRaw({ indices, attributes }, taskConfig)
   }
