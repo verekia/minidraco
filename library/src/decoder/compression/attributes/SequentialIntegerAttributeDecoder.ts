@@ -201,6 +201,14 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     return this.attribute!.numComponents
   }
 
+  // Whether the decoded values are known to lie below 2^24 in magnitude (the
+  // range in which the float extraction needs no per-value float32 rounding,
+  // see PointAttribute._lazyFloatValues): true when a prediction transform
+  // clamps them into such a range. Unpredicted values are unbounded.
+  _valuesBounded(): boolean {
+    return this._predictionScheme !== null && this._predictionScheme.boundsValues(0x1000000)
+  }
+
   // The decoded values stay in the portable attribute; the final attribute
   // only takes its size (see PointAttribute.setLazyInteger and the overrides
   // in the quantization / normal decoders).

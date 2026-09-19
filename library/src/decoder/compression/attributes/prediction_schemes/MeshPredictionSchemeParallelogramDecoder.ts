@@ -12,6 +12,10 @@ import type { PredictionSchemeWrapDecodingTransform } from './PredictionSchemeWr
  * corrections are zigzag-coded and never "positive", so the sequential decoder
  * always takes the fused zigzag path below; there is no generic per-value
  * transform path.
+ *
+ * The parallelogram's three parent values per entry come precomputed from the
+ * traversal (see MeshPredictionSchemeData.parallelogramParents), so the loops
+ * below only gather the parent values and apply the transform.
  */
 class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecoder {
   // Zigzag-fused variant: decodes corrections that are still in their unsigned
@@ -44,11 +48,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       return this._computeOriginalValuesWrap4(inCorr, outData, zigzag)
     }
 
-    const table = this._meshData.cornerTable
-    const vertexToDataMap = this._meshData.vertexToDataMap
-    const oppositeCorners = table.oppositeCornerArray() as Int32Array
-    const cornerToVertex = table.cornerToVertexArray() as Int32Array
-    const dataToCornerMap = this._meshData.dataToCornerMap
+    const parents = this._meshData.parallelogramParents()
     const transform = this._transform as PredictionSchemeWrapDecodingTransform
     const minValue = transform._minValue
     const maxValue = transform._maxValue
@@ -71,34 +71,15 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
       outData[c] = orig
     }
 
-    const cornerMapSize = dataToCornerMap.length
-    for (let p = 1; p < cornerMapSize; ++p) {
-      const cornerId = dataToCornerMap[p]
+    const numValues = this._meshData.dataToCornerMap.length
+    for (let p = 1, o = 3; p < numValues; ++p, o += 3) {
       const dstOffset = p * numComponents
+      const vertOpp = parents[o]
 
-      const oci = oppositeCorners[cornerId]
-      let hasPrediction = false
-      let vOppOff = 0
-      let vNextOff = 0
-      let vPrevOff = 0
-      if (oci >= 0) {
-        const rem = oci - ((oci / 3) | 0) * 3
-        const nextOci = rem === 2 ? oci - 2 : oci + 1
-        const prevOci = rem === 0 ? oci + 2 : oci - 1
-
-        const vertOpp = vertexToDataMap[cornerToVertex[oci]]
-        const vertNext = vertexToDataMap[cornerToVertex[nextOci]]
-        const vertPrev = vertexToDataMap[cornerToVertex[prevOci]]
-
-        if (vertOpp < p && vertNext < p && vertPrev < p) {
-          vOppOff = vertOpp * numComponents
-          vNextOff = vertNext * numComponents
-          vPrevOff = vertPrev * numComponents
-          hasPrediction = true
-        }
-      }
-
-      if (hasPrediction) {
+      if (vertOpp >= 0) {
+        const vOppOff = vertOpp * numComponents
+        const vNextOff = parents[o + 1] * numComponents
+        const vPrevOff = parents[o + 2] * numComponents
         for (let c = 0; c < numComponents; ++c) {
           let pred = (outData[vNextOff + c] + outData[vPrevOff + c] - outData[vOppOff + c]) | 0
           if (pred > maxValue) {
@@ -116,7 +97,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
           outData[dstOffset + c] = orig
         }
       } else {
-        const srcOffset = (p - 1) * numComponents
+        const srcOffset = dstOffset - numComponents
         for (let c = 0; c < numComponents; ++c) {
           let pred = outData[srcOffset + c]
           if (pred > maxValue) {
@@ -140,11 +121,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
   }
 
   _computeOriginalValuesWrap2(inCorr: Int32Array, outData: Int32Array, zigzag: boolean): boolean {
-    const table = this._meshData.cornerTable
-    const vertexToDataMap = this._meshData.vertexToDataMap
-    const oppositeCorners = table.oppositeCornerArray() as Int32Array
-    const cornerToVertex = table.cornerToVertexArray() as Int32Array
-    const dataToCornerMap = this._meshData.dataToCornerMap
+    const parents = this._meshData.parallelogramParents()
     const transform = this._transform as PredictionSchemeWrapDecodingTransform
     const minValue = transform._minValue
     const maxValue = transform._maxValue
@@ -178,31 +155,14 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     outData[0] = orig0
     outData[1] = orig1
 
-    const cornerMapSize = dataToCornerMap.length
-    for (let p = 1; p < cornerMapSize; ++p) {
-      const cornerId = dataToCornerMap[p]
+    const numValues = this._meshData.dataToCornerMap.length
+    for (let p = 1, o = 3; p < numValues; ++p, o += 3) {
       const dstOffset = p * 2
-      const oci = oppositeCorners[cornerId]
-      let hasPrediction = false
-      let vOppOff = 0
-      let vNextOff = 0
-      let vPrevOff = 0
-      if (oci >= 0) {
-        const rem = oci - ((oci / 3) | 0) * 3
-        const nextOci = rem === 2 ? oci - 2 : oci + 1
-        const prevOci = rem === 0 ? oci + 2 : oci - 1
-        const vertOpp = vertexToDataMap[cornerToVertex[oci]]
-        const vertNext = vertexToDataMap[cornerToVertex[nextOci]]
-        const vertPrev = vertexToDataMap[cornerToVertex[prevOci]]
-        if (vertOpp < p && vertNext < p && vertPrev < p) {
-          vOppOff = vertOpp * 2
-          vNextOff = vertNext * 2
-          vPrevOff = vertPrev * 2
-          hasPrediction = true
-        }
-      }
-
-      if (hasPrediction) {
+      const vertOpp = parents[o]
+      if (vertOpp >= 0) {
+        const vOppOff = vertOpp * 2
+        const vNextOff = parents[o + 1] * 2
+        const vPrevOff = parents[o + 2] * 2
         pred0 = (outData[vNextOff] + outData[vPrevOff] - outData[vOppOff]) | 0
         pred1 = (outData[vNextOff + 1] + outData[vPrevOff + 1] - outData[vOppOff + 1]) | 0
       } else {
@@ -242,11 +202,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
   }
 
   _computeOriginalValuesWrap3(inCorr: Int32Array, outData: Int32Array, zigzag: boolean): boolean {
-    const table = this._meshData.cornerTable
-    const vertexToDataMap = this._meshData.vertexToDataMap
-    const oppositeCorners = table.oppositeCornerArray() as Int32Array
-    const cornerToVertex = table.cornerToVertexArray() as Int32Array
-    const dataToCornerMap = this._meshData.dataToCornerMap
+    const parents = this._meshData.parallelogramParents()
     const transform = this._transform as PredictionSchemeWrapDecodingTransform
     const minValue = transform._minValue
     const maxValue = transform._maxValue
@@ -294,31 +250,14 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     outData[1] = orig1
     outData[2] = orig2
 
-    const cornerMapSize = dataToCornerMap.length
-    for (let p = 1; p < cornerMapSize; ++p) {
-      const cornerId = dataToCornerMap[p]
+    const numValues = this._meshData.dataToCornerMap.length
+    for (let p = 1, o = 3; p < numValues; ++p, o += 3) {
       const dstOffset = p * 3
-      const oci = oppositeCorners[cornerId]
-      let hasPrediction = false
-      let vOppOff = 0
-      let vNextOff = 0
-      let vPrevOff = 0
-      if (oci >= 0) {
-        const rem = oci - ((oci / 3) | 0) * 3
-        const nextOci = rem === 2 ? oci - 2 : oci + 1
-        const prevOci = rem === 0 ? oci + 2 : oci - 1
-        const vertOpp = vertexToDataMap[cornerToVertex[oci]]
-        const vertNext = vertexToDataMap[cornerToVertex[nextOci]]
-        const vertPrev = vertexToDataMap[cornerToVertex[prevOci]]
-        if (vertOpp < p && vertNext < p && vertPrev < p) {
-          vOppOff = vertOpp * 3
-          vNextOff = vertNext * 3
-          vPrevOff = vertPrev * 3
-          hasPrediction = true
-        }
-      }
-
-      if (hasPrediction) {
+      const vertOpp = parents[o]
+      if (vertOpp >= 0) {
+        const vOppOff = vertOpp * 3
+        const vNextOff = parents[o + 1] * 3
+        const vPrevOff = parents[o + 2] * 3
         pred0 = (outData[vNextOff] + outData[vPrevOff] - outData[vOppOff]) | 0
         pred1 = (outData[vNextOff + 1] + outData[vPrevOff + 1] - outData[vOppOff + 1]) | 0
         pred2 = (outData[vNextOff + 2] + outData[vPrevOff + 2] - outData[vOppOff + 2]) | 0
@@ -375,11 +314,7 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
   // Four components: tangents, RGBA colors, skin joints/weights. Same
   // structure as the 2/3-component loops.
   _computeOriginalValuesWrap4(inCorr: Int32Array, outData: Int32Array, zigzag: boolean): boolean {
-    const table = this._meshData.cornerTable
-    const vertexToDataMap = this._meshData.vertexToDataMap
-    const oppositeCorners = table.oppositeCornerArray() as Int32Array
-    const cornerToVertex = table.cornerToVertexArray() as Int32Array
-    const dataToCornerMap = this._meshData.dataToCornerMap
+    const parents = this._meshData.parallelogramParents()
     const transform = this._transform as PredictionSchemeWrapDecodingTransform
     const minValue = transform._minValue
     const maxValue = transform._maxValue
@@ -394,31 +329,15 @@ class MeshPredictionSchemeParallelogramDecoder extends MeshPredictionSchemeDecod
     let pred1 = pred0
     let pred2 = pred0
     let pred3 = pred0
-    const cornerMapSize = dataToCornerMap.length
-    for (let p = 0; p < cornerMapSize; ++p) {
+    const numValues = this._meshData.dataToCornerMap.length
+    for (let p = 0, o = 0; p < numValues; ++p, o += 3) {
       const dstOffset = p * 4
       if (p > 0) {
-        const cornerId = dataToCornerMap[p]
-        const oci = oppositeCorners[cornerId]
-        let hasPrediction = false
-        let vOppOff = 0
-        let vNextOff = 0
-        let vPrevOff = 0
-        if (oci >= 0) {
-          const rem = oci - ((oci / 3) | 0) * 3
-          const nextOci = rem === 2 ? oci - 2 : oci + 1
-          const prevOci = rem === 0 ? oci + 2 : oci - 1
-          const vertOpp = vertexToDataMap[cornerToVertex[oci]]
-          const vertNext = vertexToDataMap[cornerToVertex[nextOci]]
-          const vertPrev = vertexToDataMap[cornerToVertex[prevOci]]
-          if (vertOpp < p && vertNext < p && vertPrev < p) {
-            vOppOff = vertOpp * 4
-            vNextOff = vertNext * 4
-            vPrevOff = vertPrev * 4
-            hasPrediction = true
-          }
-        }
-        if (hasPrediction) {
+        const vertOpp = parents[o]
+        if (vertOpp >= 0) {
+          const vOppOff = vertOpp * 4
+          const vNextOff = parents[o + 1] * 4
+          const vPrevOff = parents[o + 2] * 4
           pred0 = (outData[vNextOff] + outData[vPrevOff] - outData[vOppOff]) | 0
           pred1 = (outData[vNextOff + 1] + outData[vPrevOff + 1] - outData[vOppOff + 1]) | 0
           pred2 = (outData[vNextOff + 2] + outData[vPrevOff + 2] - outData[vOppOff + 2]) | 0

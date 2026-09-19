@@ -7,7 +7,7 @@ const ANS_IO_BASE = 256
 
 // Short-stream decoding (see RAnsDecoder.ransBuildLookUpTable): a stream whose
 // symbol count times this factor is below the rANS precision skips the full
-// lut for a 2^COARSE_BUCKET_BITS-entry bucket table.
+// lut for a bucket table of at most 2^COARSE_BUCKET_BITS entries.
 const COARSE_STREAM_FACTOR = 8
 const COARSE_BUCKET_BITS = 8
 
@@ -267,15 +267,18 @@ export class RAnsDecoder {
         return false
       }
       cumProbTable[numSymbols] = ransPrecision
-      const bucketShift = this.ransPrecisionBits - COARSE_BUCKET_BITS
+      // About two buckets per symbol, at most 2^COARSE_BUCKET_BITS: a dozen
+      // symbols over a fifteen-symbol alphabet is not worth 256 bucket writes.
+      let bucketBits = 33 - Math.clz32(numSymbols)
+      if (bucketBits > COARSE_BUCKET_BITS) bucketBits = COARSE_BUCKET_BITS
+      const numBuckets = 1 << bucketBits
+      const bucketShift = this.ransPrecisionBits - bucketBits
       const bucketTable =
-        numSymbols > 65536
-          ? acquirePooled(Uint32Array, 1 << COARSE_BUCKET_BITS)
-          : acquirePooled(Uint16Array, 1 << COARSE_BUCKET_BITS)
+        numSymbols > 65536 ? acquirePooled(Uint32Array, numBuckets) : acquirePooled(Uint16Array, numBuckets)
       this.bucketShift = bucketShift
       this.bucketTable = bucketTable
       let symbol = 0
-      for (let b = 0; b < 1 << COARSE_BUCKET_BITS; ++b) {
+      for (let b = 0; b < numBuckets; ++b) {
         const rem = b << bucketShift
         while (cumProbTable[symbol + 1] <= rem) symbol++
         bucketTable[b] = symbol
@@ -317,21 +320,51 @@ export class RAnsDecoder {
   }
 }
 
-// Pairing entry: the lockstep loop for two lut streams, or sequential decodes
-// when either stream uses the coarse tables.
-export function ransDecodeSymbolsPair(
-  a: RAnsDecoder,
-  outA: Uint32Array,
-  countA: number,
-  b: RAnsDecoder,
-  outB: Uint32Array,
-  countB: number,
-): void {
-  if (!a.coarse && !b.coarse) {
-    ransDecodeSymbolsPairU16(a, outA, countA, b, outB, countB)
-  } else {
-    a.decodeSymbols(outA, countA)
-    b.decodeSymbols(outB, countB)
+// A primed, not-yet-decoded raw rANS symbol stream.
+export interface RansStream {
+  ans: RAnsDecoder
+  out: Uint32Array
+  count: number
+}
+
+// Decodes several independent streams, overlapping their serial per-symbol
+// dependency chains in the CPU pipeline: the longest three in lockstep for
+// as long as the third lasts, then the longest two, then the last one alone
+// -- re-ranking after each step, so a long stream's tail is interleaved with
+// the next longest instead of finishing on its own. Short streams on the
+// coarse tables (see ransBuildLookUpTable) decode alone: they are cheap
+// either way and the lockstep loops want lut streams. Output is identical to
+// decoding each stream on its own.
+export function ransDecodeStreams(streams: RansStream[]): void {
+  const live: RansStream[] = []
+  for (const stream of streams) {
+    if (stream.count === 0) continue
+    if (stream.ans.coarse) stream.ans.decodeSymbols(stream.out, stream.count)
+    else live.push({ ans: stream.ans, out: stream.out, count: stream.count })
+  }
+  const byLength = (x: RansStream, y: RansStream): number => y.count - x.count
+  live.sort(byLength)
+  while (live.length >= 3) {
+    const a = live[0]
+    const b = live[1]
+    const c = live[2]
+    const shared = c.count
+    ransDecodeSymbolsTrioU16(a.ans, a.out, shared, b.ans, b.out, shared, c.ans, c.out, shared)
+    live.splice(2, 1)
+    a.out = a.out.subarray(shared)
+    a.count -= shared
+    b.out = b.out.subarray(shared)
+    b.count -= shared
+    if (a.count === 0) live.shift()
+    if (b.count === 0) live.splice(live.indexOf(b), 1)
+    live.sort(byLength)
+  }
+  if (live.length === 2) {
+    const a = live[0]
+    const b = live[1]
+    ransDecodeSymbolsPairU16(a.ans, a.out, a.count, b.ans, b.out, b.count)
+  } else if (live.length === 1) {
+    live[0].ans.decodeSymbols(live[0].out, live[0].count)
   }
 }
 

@@ -25,6 +25,10 @@ class PredictionSchemeWrapDecodingTransform {
     return false
   }
 
+  boundsValues(limit: number): boolean {
+    return this._maxValue < limit && this._minValue > -limit
+  }
+
   computeOriginalValue(
     predictedVals: Int32Array,
     predictedOffset: number,

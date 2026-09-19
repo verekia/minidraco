@@ -13,6 +13,11 @@ class PredictionSchemeNormalOctahedronTransformBase {
     return true
   }
 
+  // Outputs are origS/origT + center with origS/origT in [-center, center].
+  boundsValues(limit: number): boolean {
+    return this._octahedronToolBox._maxQuantizedValue < limit
+  }
+
   /** No-op to fulfill the transform interface. */
   init(_numComponents: number): void {}
 

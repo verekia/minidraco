@@ -25,7 +25,7 @@ class DepthFirstTraverser {
   emitsPointIds = false
   _cornerToVertex: Int32Array | number[] | null = null
   _oppositeCorners: Int32Array | number[] | null = null
-  _vertexLeftmost: Int32Array | number[] | null = null
+  _vertexOnBoundary: Uint8Array | null = null
   _numCorners = 0
 
   init(cornerTable: CornerTable | MeshAttributeCornerTable, observer: MeshAttributeIndicesEncodingObserver): void {
@@ -38,7 +38,7 @@ class DepthFirstTraverser {
     // calls in the hot loop are polymorphic and not inlined by the JIT.
     this._cornerToVertex = cornerTable.cornerToVertexArray()
     this._oppositeCorners = cornerTable.oppositeCornerArray()
-    this._vertexLeftmost = cornerTable.vertexLeftmostCornerArray()
+    this._vertexOnBoundary = cornerTable.vertexOnBoundaryArray()
     this._numCorners = cornerTable.numCorners()
   }
 
@@ -88,7 +88,7 @@ class DepthFirstTraverser {
     const observer = this._observer!
     const cornerToVertex = this._cornerToVertex!
     const oppositeCorners = this._oppositeCorners!
-    const vertexLeftmost = this._vertexLeftmost!
+    const vertexOnBoundary = this._vertexOnBoundary!
     const stack = this._cornerTraversalStack
     let numVisitedFaces = this._numVisitedFaces
 
@@ -151,18 +151,13 @@ class DepthFirstTraverser {
         const faceBase = faceId * 3
         const nextCornerId = cornerId === faceBase + 2 ? faceBase : cornerId + 1
         if (vertexToEncodedMap[vertId] < 0) {
-          // Inlined isOnBoundary
-          // An out-of-range vertex yields undefined here, and `undefined >= 0`
-          // is false, so the range check needs no separate guard.
-          const lc: number | undefined = vertexLeftmost[vertId]
-          let onBoundary = true
-          if (lc! >= 0) {
-            const nextLc = lc % 3 === 2 ? lc - 2 : lc + 1
-            onBoundary = oppositeCorners[nextLc] < 0
-          }
           encodedToCornerMap[numValues] = cornerId
           vertexToEncodedMap[vertId] = numValues++
-          if (!onBoundary) {
+          // C++ IsOnBoundary, precomputed per vertex (see
+          // CornerTable._vertexOnBoundary). An out-of-range vertex yields
+          // undefined here, which counts as a boundary, so the range check
+          // needs no separate guard.
+          if (vertexOnBoundary[vertId] === 0) {
             // Move to the right corner: opposite(next(cornerId)).
             cornerId = oppositeCorners[nextCornerId]
             faceId = (cornerId / 3) | 0
