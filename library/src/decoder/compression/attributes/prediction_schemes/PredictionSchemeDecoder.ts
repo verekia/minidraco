@@ -23,6 +23,11 @@ interface PredictionSchemeDecodingTransform {
   ): void
   // Octahedral transforms only (the geometric normal scheme needs it).
   quantizationBits?(): number
+  // True when every value the transform produces lies strictly within
+  // (-limit, limit) -- the wrap transform clamps into its decoded [min, max]
+  // and the octahedral ones into [0, maxQuantizedValue] -- so the extraction
+  // can skip its magnitude scan (see PointAttribute._lazyFloatValues).
+  boundsValues(limit: number): boolean
   // Optional fused delta loop (value[i] = original(value[i-1], corr[i]) over
   // the whole attribute). PredictionSchemeDeltaDecoder uses it when present so
   // hot transforms avoid one virtual call per value; inCorr and outData may
@@ -44,6 +49,10 @@ class PredictionSchemeDecoder {
   /** True if all correction values are guaranteed to be positive. */
   areCorrectionsPositive(): boolean {
     return this._transform.areCorrectionsPositive()
+  }
+
+  boundsValues(limit: number): boolean {
+    return this._transform.boundsValues(limit)
   }
 
   getNumParentAttributes(): number {

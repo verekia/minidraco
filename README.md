@@ -44,17 +44,17 @@ Median across 18 models vs [draco.js](https://github.com/mrdoob/draco.js) and th
 
 | benchmark                                          | vs draco.js     | vs draco3d wasm |
 | -------------------------------------------------- | --------------- | --------------- |
-| single-threaded decode — bun (JSC)                 | 🟢 1.53× faster | 🟢 1.53× faster |
-| single-threaded decode — Chrome (V8)               | 🟢 1.44× faster | 🟢 1.27× faster |
-| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.47× faster | 🟢 1.03× faster |
-| `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.42× faster | 🟢 1.26× faster |
+| single-threaded decode — bun (JSC)                 | 🟢 1.60× faster | 🟢 1.69× faster |
+| single-threaded decode — Chrome (V8)               | 🟢 1.57× faster | 🟢 1.43× faster |
+| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.57× faster | 🟢 1.06× faster |
+| `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.42× faster | 🟢 1.28× faster |
 
 ## Download size
 
 | download (brotli)             | minidraco | vs draco.js              | vs draco3d wasm          |
 | ----------------------------- | --------- | ------------------------ | ------------------------ |
-| single-threaded (default)     | 21 KB     | 🟢 1.04× smaller (22 KB) | 🟢 3.82× smaller (81 KB) |
-| worker pool (`workers: true`) | 44 KB     | 🟢 not supported         | 🟢 1.84× smaller (81 KB) |
+| single-threaded (default)     | 21 KB     | 🟢 1.05× smaller (22 KB) | 🟢 3.84× smaller (81 KB) |
+| worker pool (`workers: true`) | 43 KB     | 🟢 not supported         | 🟢 1.85× smaller (81 KB) |
 
 ## Monorepo
 

@@ -71,6 +71,9 @@ class PointAttribute extends GeometryAttribute {
   _lazyValues: Int32Array | null = null
   _lazyMin: number[] = []
   _lazyScale = 0
+  // Set when the decoder knows every lazy value is below 2^24 in magnitude
+  // (see _lazyFloatValues); the extraction then skips its scan.
+  _lazyBounded = false
 
   constructor(geometryAttribute?: GeometryAttribute) {
     super()
@@ -128,19 +131,21 @@ class PointAttribute extends GeometryAttribute {
 
   // Quantized float values: value * delta + min per component (float32
   // arithmetic, see _extractQuantized), as the C++ Dequantizer computes them.
-  setLazyQuantized(values: Int32Array | null, minValues: number[], delta: number): void {
+  setLazyQuantized(values: Int32Array | null, minValues: number[], delta: number, bounded: boolean): void {
     this._lazyKind = LAZY_QUANTIZED
     this._lazyValues = values
     this._lazyMin = minValues
     this._lazyScale = delta
+    this._lazyBounded = bounded
   }
 
   // Octahedral normals: two quantized coordinates per value, dequantized by
   // `scale` and turned into unit vectors (see _extractOctahedron).
-  setLazyOctahedron(values: Int32Array | null, scale: number): void {
+  setLazyOctahedron(values: Int32Array | null, scale: number, bounded: boolean): void {
     this._lazyKind = LAZY_OCTAHEDRON
     this._lazyValues = values
     this._lazyScale = scale
+    this._lazyBounded = bounded
   }
 
   get size(): number {
@@ -309,8 +314,11 @@ class PointAttribute extends GeometryAttribute {
   // without the (measurably costly) int-to-float32-to-double round trip per
   // component. Larger values (quantization above 24 bits, never seen in
   // practice) are rounded in place once here, after which the same holds.
+  // The decoder marks the attribute bounded when its prediction transform
+  // already confines the values to that range, and the scan is skipped.
   _lazyFloatValues(): Int32Array {
     const values = this._lazyValues!
+    if (this._lazyBounded) return values
     for (let i = 0; i < values.length; ++i) {
       if (values[i] >= 0x1000000 || values[i] <= -0x1000000) {
         for (let j = 0; j < values.length; ++j) values[j] = Math.fround(values[j])

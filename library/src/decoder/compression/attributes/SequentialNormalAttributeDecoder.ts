@@ -43,7 +43,11 @@ class SequentialNormalAttributeDecoder extends SequentialIntegerAttributeDecoder
     const q = this._quantizationBits
     if (q < 2 || q > 30) return false
     // OctahedronToolBox: max_value = 2^q - 2, scale = 2 / float(max_value).
-    this.attribute!.setLazyOctahedron(this._portableData, Math.fround(2.0 / Math.fround((1 << q) - 2)))
+    this.attribute!.setLazyOctahedron(
+      this._portableData,
+      Math.fround(2.0 / Math.fround((1 << q) - 2)),
+      this._valuesBounded(),
+    )
     return true
   }
 

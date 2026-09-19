@@ -1,104 +1,100 @@
 // Ported from draco.js src/mesh/MeshAttributeCornerTable.js (MIT)
 
-import { scratchInt32, scratchInt32Filled, scratchUint8Zeroed } from '../core/ScratchArena'
+import { scratchInt32, scratchUint8Zeroed } from '../core/ScratchArena'
 
 import type { CornerTable } from '../compression/mesh/MeshEdgebreakerDecoderImpl'
 
 const kInvalidCornerIndex = -1
-const kInvalidVertexIndex = -1
 
+// The connectivity of one attribute: the base corner table with every
+// attribute seam cut open. Attribute vertices are numbered by the edgebreaker
+// decoder's ring pass (see MeshEdgebreakerDecoderImpl
+// ._assignAttributeVerticesAndPoints): a vertex on no seam of this table
+// keeps its base id, and a seam vertex keeps it for the first of its
+// sub-vertices and takes fresh ids past the base count for the rest. The
+// C++ numbers them compactly instead, but only their identity matters -- the
+// traversals and predictions never compare ids for order -- so the base
+// numbering is copied and patched rather than rebuilt corner by corner.
 class MeshAttributeCornerTable {
-  is_edge_on_seam_: Uint8Array | number[] = []
-  is_vertex_on_seam_: Uint8Array | number[] = []
-  corner_to_vertex_map_: Int32Array | number[] = []
-  vertex_to_left_most_corner_map_: Int32Array | number[] = []
+  // Base vertices touched by a seam edge of this table.
+  is_vertex_on_seam_: Uint8Array = new Uint8Array(0)
+  corner_to_vertex_map_: Int32Array = new Int32Array(0)
+  // Attribute vertex -> 1 when its fan is open in this table (see
+  // CornerTable._vertexOnBoundary). The C++ also keeps each attribute
+  // vertex's left-most corner, but the decoder only ever asked it whether
+  // that corner sits on a boundary, which this answers directly.
+  _vertexOnBoundary: Uint8Array = new Uint8Array(0)
   // Attribute-vertex count. C++ keeps a vertex -> attribute-entry map here, but
   // the decoder only ever reads its size, so track the count directly instead
   // of allocating an Int32Array per attribute corner table.
   num_attribute_vertices_ = 0
   corner_table_: CornerTable | null = null
-  // Lazily built; see oppositeCornerArray.
-  _effectiveOpposite: Int32Array | null = null
-  // Every corner passed to addSeamEdge (may contain duplicates); lets
-  // oppositeCornerArray patch seams without scanning every corner's flag.
-  // Preallocated to its exact upper bound (2 per seam edge) by the caller via
-  // reserveSeamEdges -- a plain array grown by push() was measurable on
-  // seam-heavy files.
-  _seamCorners: Int32Array | number[] = []
-  _numSeamCorners = 0
+  // The base table's opposite corners with both corners of every seam edge
+  // set to -1: what opposite() answers, and what the traversals read.
+  _opposite: Int32Array = new Int32Array(0)
 
-  initEmpty(table: CornerTable | null): boolean {
-    if (table === null) {
-      return false
-    }
-    // Typed arrays keep the per-corner hot accessors monomorphic. Uint8Array
-    // defaults to 0 (== false); corner_to_vertex_map_ uses a signed -1 sentinel.
-    // Decode-scoped scratch: these live only until the decode finishes (the
-    // result mesh keeps no reference to them), so pooling them keeps a
-    // primitive-heavy file from allocating a fresh set per attribute per prim.
-    this.is_edge_on_seam_ = scratchUint8Zeroed(table.numCorners())
-    this.is_vertex_on_seam_ = scratchUint8Zeroed(table.numVertices())
-    this.corner_to_vertex_map_ = scratchInt32Filled(table.numCorners(), kInvalidVertexIndex)
-    this.num_attribute_vertices_ = 0
-    this.vertex_to_left_most_corner_map_ = []
-    // Lazily built; see oppositeCornerArray.
-    this._effectiveOpposite = null
-    this._seamCorners = []
-    this._numSeamCorners = 0
+  // Starts the table as a copy of the base connectivity; addSeamEdge then
+  // cuts the seams and the ring pass numbers the vertices. Decode-scoped
+  // scratch throughout: the table lives only until the decode finishes (the
+  // result mesh keeps no reference to it), so pooling keeps a primitive-heavy
+  // file from allocating a fresh set per attribute per prim.
+  initEmpty(table: CornerTable): void {
+    const numCorners = table.numCorners()
     this.corner_table_ = table
-    return true
+    this.is_vertex_on_seam_ = scratchUint8Zeroed(table.numVertices())
+    this._opposite = scratchInt32(numCorners)
+    this._opposite.set(table.oppositeCornerArray())
+    this.corner_to_vertex_map_ = scratchInt32(numCorners)
+    this.corner_to_vertex_map_.set(table.cornerToVertexArray())
+    this.num_attribute_vertices_ = 0
   }
 
-  // Sizes the seam-corner list for numSeamEdges upcoming addSeamEdge calls
-  // (each adds at most two corners). Decode-scoped scratch.
-  reserveSeamEdges(numSeamEdges: number): void {
-    this._seamCorners = scratchInt32(numSeamEdges * 2)
-    this._numSeamCorners = 0
-  }
-
+  // Cuts the edge opposite corner c (and its twin) and flags its two vertices.
   addSeamEdge(c: number): void {
     const cornerToVertex = this.corner_table_!.cornerToVertexArray()
-    const oppositeCorners = this.corner_table_!.oppositeCornerArray()
-    const isEdge = this.is_edge_on_seam_
+    const opposite = this._opposite
     const isVert = this.is_vertex_on_seam_
-    const seamCorners = this._seamCorners
 
-    isEdge[c] = 1
-    seamCorners[this._numSeamCorners++] = c
+    const oppCorner = opposite[c]
+    opposite[c] = kInvalidCornerIndex
     // Inlined next(c)/previous(c).
     let rem = c - ((c / 3) | 0) * 3
     isVert[cornerToVertex[rem === 2 ? c - 2 : c + 1]] = 1
     isVert[cornerToVertex[rem === 0 ? c + 2 : c - 1]] = 1
 
-    const oppCorner = oppositeCorners[c]
     if (oppCorner !== kInvalidCornerIndex) {
-      isEdge[oppCorner] = 1
-      seamCorners[this._numSeamCorners++] = oppCorner
+      opposite[oppCorner] = kInvalidCornerIndex
       rem = oppCorner - ((oppCorner / 3) | 0) * 3
       isVert[cornerToVertex[rem === 2 ? oppCorner - 2 : oppCorner + 1]] = 1
       isVert[cornerToVertex[rem === 0 ? oppCorner + 2 : oppCorner - 1]] = 1
     }
   }
 
-  // Installs attribute-vertex numbering computed externally (the edgebreaker
-  // decoder's fused ring pass fills corner_to_vertex_map_ directly and hands
-  // over the per-vertex left-most corners here). leftMostMap is decode-scoped
-  // scratch sized for at least numNewVertices entries.
-  setRecomputedVertices(leftMostMap: Int32Array, numNewVertices: number): void {
-    this.num_attribute_vertices_ = numNewVertices
-    this.vertex_to_left_most_corner_map_ =
-      leftMostMap.length === numNewVertices ? leftMostMap : leftMostMap.subarray(0, numNewVertices)
+  // Installs the vertex numbering computed by the edgebreaker decoder's ring
+  // pass, which fills corner_to_vertex_map_ directly and hands over the
+  // per-vertex boundary flags here (decode-scoped scratch sized for at
+  // least numVertices entries).
+  setRecomputedVertices(onBoundary: Uint8Array, numVertices: number): void {
+    this.num_attribute_vertices_ = numVertices
+    this._vertexOnBoundary = onBoundary
   }
 
-  isCornerOppositeToSeamEdge(corner: number): number {
-    return this.is_edge_on_seam_[corner]
+  // A table without interior seams is the base connectivity itself: every
+  // vertex ring is one attribute vertex, and the boundary edges are already
+  // open in the base opposite table. Shares the base arrays (read-only from
+  // here on), so its traversal also resolves to the base table's cached one.
+  initAsBase(table: CornerTable): void {
+    this.corner_table_ = table
+    this._opposite = table.oppositeCornerArray()
+    this.corner_to_vertex_map_ = table.cornerToVertexArray()
+    this.setRecomputedVertices(table.vertexOnBoundaryArray(), table.numVertices())
   }
 
   opposite(corner: number): number {
-    if (corner === kInvalidCornerIndex || this.isCornerOppositeToSeamEdge(corner)) {
+    if (corner === kInvalidCornerIndex) {
       return kInvalidCornerIndex
     }
-    return this.corner_table_!.opposite(corner)
+    return this._opposite[corner]
   }
 
   next(corner: number): number {
@@ -131,41 +127,17 @@ class MeshAttributeCornerTable {
 
   // --- Flat-array accessors: let DepthFirstTraverser avoid per-corner dispatch. ---
 
-  cornerToVertexArray(): Int32Array | number[] {
+  cornerToVertexArray(): Int32Array {
     return this.corner_to_vertex_map_
   }
 
-  // Seam-aware opposite corners (seam edges -> -1), matching opposite(). Cached on
-  // first use; seams and connectivity are finalized before traversal, so it's stable.
+  // Seam-aware opposite corners (seam edges -> -1), matching opposite().
   oppositeCornerArray(): Int32Array {
-    if (this._effectiveOpposite === null) {
-      const nc = this.corner_table_!.numCorners()
-      const base = this.corner_table_!.oppositeCornerArray()
-      const seamCorners = this._seamCorners
-      const numSeamCorners = this._numSeamCorners
-      if (numSeamCorners === 0) {
-        // No seams: the base connectivity is already correct, share it.
-        // (It is read-only after connectivity decoding.)
-        this._effectiveOpposite = base
-      } else {
-        // Bulk-copy the base opposites, then punch out only the seam edges: a
-        // memcpy plus a sparse fix-up beats a per-corner ct.opposite()
-        // dispatch loop (this build was ~10% of total decode time). The copy
-        // lives in decode-scoped scratch — this table (and the traversal
-        // cache entries that may share it) never outlives the decode.
-        const eff = scratchInt32(nc)
-        eff.set(base.length === nc ? base : base.subarray(0, nc))
-        for (let i = 0; i < numSeamCorners; ++i) {
-          eff[seamCorners[i]] = kInvalidCornerIndex
-        }
-        this._effectiveOpposite = eff
-      }
-    }
-    return this._effectiveOpposite
+    return this._opposite
   }
 
-  vertexLeftmostCornerArray(): Int32Array | number[] {
-    return this.vertex_to_left_most_corner_map_
+  vertexOnBoundaryArray(): Uint8Array {
+    return this._vertexOnBoundary
   }
 
   // Takes over another table's state wholesale. Only valid when both tables
@@ -173,14 +145,11 @@ class MeshAttributeCornerTable {
   // case every one of these is identical and read-only from here on.
   adoptFrom(other: MeshAttributeCornerTable): void {
     this.corner_table_ = other.corner_table_
-    this.is_edge_on_seam_ = other.is_edge_on_seam_
     this.is_vertex_on_seam_ = other.is_vertex_on_seam_
     this.corner_to_vertex_map_ = other.corner_to_vertex_map_
     this.num_attribute_vertices_ = other.num_attribute_vertices_
-    this.vertex_to_left_most_corner_map_ = other.vertex_to_left_most_corner_map_
-    this._effectiveOpposite = other._effectiveOpposite
-    this._seamCorners = other._seamCorners
-    this._numSeamCorners = other._numSeamCorners
+    this._vertexOnBoundary = other._vertexOnBoundary
+    this._opposite = other._opposite
   }
 }
 

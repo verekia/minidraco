@@ -48,7 +48,7 @@ class SequentialQuantizationAttributeDecoder extends SequentialIntegerAttributeD
     if (maxQuantizedValue <= 0) return false
     // C++ Dequantizer: delta = range / static_cast<float>(max_quantized_value).
     const delta = Math.fround(this._range / Math.fround(maxQuantizedValue))
-    this.attribute!.setLazyQuantized(this._portableData, this._minValues, delta)
+    this.attribute!.setLazyQuantized(this._portableData, this._minValues, delta, this._valuesBounded())
     return true
   }
 }

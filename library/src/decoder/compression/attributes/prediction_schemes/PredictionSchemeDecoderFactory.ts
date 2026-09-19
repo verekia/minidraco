@@ -76,11 +76,7 @@ function createPredictionSchemeForDecoder(
   if (cornerTable !== null && encodingData !== null) {
     // Attributes with their own seams use their attribute corner table.
     const attCornerTable = meshDecoder.getAttributeCornerTable(attId)
-    const meshData = new MeshPredictionSchemeData(
-      attCornerTable !== null ? attCornerTable : cornerTable,
-      encodingData.encodedAttributeValueIndexToCornerMap,
-      encodingData.vertexToEncodedAttributeValueIndexMap,
-    )
+    const meshData = new MeshPredictionSchemeData(attCornerTable !== null ? attCornerTable : cornerTable, encodingData)
     const ret = createMeshPredictionSchemeDecoder(method, transform, meshData)
     if (ret !== null) return ret
   }

@@ -2,7 +2,7 @@
 
 import type { PointAttribute } from '../../attributes/PointAttribute'
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
-import type { RAnsDecoder } from '../entropy/ANSCoding'
+import type { RansStream } from '../entropy/ANSCoding'
 import type { PointCloudDecoder } from '../point_cloud/PointCloudDecoder'
 import type { PredictionSchemeDecoderInterface } from './prediction_schemes/PredictionSchemeDecoderInterface'
 
@@ -25,7 +25,7 @@ class SequentialAttributeDecoder {
   // --- Two-phase decode ---
   // The controller calls Parse for every attribute first (headers, schemes,
   // prediction data -- all size-driven cursor movement), collects the pending
-  // rANS symbol streams, decodes them in pairs (see ransDecodeSymbolsPair),
+  // rANS symbol streams, decodes them in lockstep (see ransDecodeStreams),
   // then calls Finish per attribute in order. Decoders without a deferrable
   // stream simply do the whole decode in Parse (decodeValues); the defaults
   // below are theirs.
@@ -127,10 +127,6 @@ class SequentialAttributeDecoder {
 }
 
 // A primed, not-yet-decoded raw rANS symbol stream (see the two-phase decode).
-export interface PendingSymbolStream {
-  ans: RAnsDecoder
-  out: Uint32Array
-  count: number
-}
+export type PendingSymbolStream = RansStream
 
 export { SequentialAttributeDecoder }

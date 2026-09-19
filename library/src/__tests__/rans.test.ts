@@ -6,7 +6,7 @@
 // no corpus file exercises this path).
 import { describe, expect, test } from 'bun:test'
 
-import { ansReadInit, RAnsDecoder, ransDecodeSymbolsPair } from '../decoder/compression/entropy/ANSCoding'
+import { ansReadInit, RAnsDecoder, ransDecodeStreams } from '../decoder/compression/entropy/ANSCoding'
 
 const encode = (symbols: number[], probs: Uint32Array, precisionBits: number): Uint8Array => {
   const precision = 1 << precisionBits
@@ -95,7 +95,7 @@ describe('rANS symbol decoding', () => {
     expect(decoder.coarse).toBe(true)
   })
 
-  test('lockstep pair decode falls back per stream when one is coarse', () => {
+  test('stream scheduler mixes lut and coarse streams of uneven lengths', () => {
     const probsA = makeProbs(500, 13)
     const probsB = makeProbs(70000, 20)
     const symbolsA = Array.from({ length: 1000 }, () => random(500))
@@ -110,10 +110,32 @@ describe('rANS symbol decoding', () => {
     expect(ansReadInit(b, encodedB, encodedB.length, 0, b.lRansBase, 4)).toBe(true)
     const outA = new Uint32Array(1000)
     const outB = new Uint32Array(1000)
-    ransDecodeSymbolsPair(a, outA, 1000, b, outB, 1000)
+    ransDecodeStreams([
+      { ans: a, out: outA, count: 1000 },
+      { ans: b, out: outB, count: 1000 },
+    ])
     a.readEnd()
     b.readEnd()
     expect(Array.from(outA)).toEqual(symbolsA)
     expect(Array.from(outB)).toEqual(symbolsB)
+  })
+
+  test('stream scheduler: five lut streams of different lengths, trio then pair then tails', () => {
+    const lengths = [5000, 3000, 2900, 700, 10]
+    const streams = lengths.map((count, i) => {
+      const numSymbols = 40 + i * 7
+      const probs = makeProbs(numSymbols, 12)
+      const symbols = Array.from({ length: count }, () => random(numSymbols))
+      const encoded = encode(symbols, probs, 12)
+      const ans = new RAnsDecoder(12)
+      expect(ans.ransBuildLookUpTable(probs, numSymbols, count)).toBe(true)
+      expect(ansReadInit(ans, encoded, encoded.length, 0, ans.lRansBase, 4)).toBe(true)
+      return { ans, out: new Uint32Array(count), count, symbols }
+    })
+    ransDecodeStreams(streams)
+    for (const stream of streams) {
+      expect(stream.ans.readEnd()).toBe(true)
+      expect(Array.from(stream.out)).toEqual(stream.symbols)
+    }
   })
 })

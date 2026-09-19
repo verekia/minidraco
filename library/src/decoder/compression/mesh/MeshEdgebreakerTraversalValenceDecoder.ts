@@ -3,7 +3,7 @@
 import { scratchInt32Filled, scratchUint32 } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { SymbolCodingMethod } from '../config/CompressionShared'
-import { ransDecodeSymbolsPairU16, ransDecodeSymbolsTrioU16 } from '../entropy/ANSCoding'
+import { ransDecodeStreams } from '../entropy/ANSCoding'
 import { RAnsSymbolDecoder } from '../entropy/RAnsSymbolDecoder'
 import { decodeTaggedSymbols } from '../entropy/SymbolDecoding'
 import {
@@ -18,6 +18,7 @@ import {
 import { MeshEdgebreakerTraversalDecoder } from './MeshEdgebreakerTraversalDecoder'
 
 import type { DecoderBuffer } from '../../core/DecoderBuffer'
+import type { RansStream } from '../entropy/ANSCoding'
 import type { CornerTable, MeshEdgebreakerDecoderImpl } from './MeshEdgebreakerDecoderImpl'
 
 // Decoder for traversal encoded with MeshEdgebreakerTraversalValenceEncoder.
@@ -72,14 +73,13 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
 
     // The per-valence-context symbol streams are independent rANS streams laid
     // out back to back, and every cursor movement below is size-driven -- so
-    // all six can be header-parsed first and then decoded two at a time.
-    // Interleaving two streams overlaps their serial per-symbol dependency
-    // chains in the CPU pipeline (the single-stream loop is latency-bound),
-    // and produces bit-identical output since each stream's bytes and
-    // destination are untouched. Non-raw or mixed-width streams (never emitted
-    // by real encoders for these tiny alphabets) fall back to the sequential
-    // path via pendingFallback.
-    const pending: { decoder: RAnsSymbolDecoder; out: Uint32Array; count: number }[] = []
+    // all six can be header-parsed first and then decoded together in
+    // lockstep (see ransDecodeStreams), with bit-identical output since each
+    // stream's bytes and destination are untouched. A tagged stream (never
+    // emitted by real encoders for these tiny alphabets) is decoded on the
+    // spot instead.
+    const pending: RAnsSymbolDecoder[] = []
+    const streams: RansStream[] = []
     for (let i = 0; i < numUniqueValences; ++i) {
       const numSymbols = decodeVarint(outBuffer)
       if (numSymbols === undefined) {
@@ -120,7 +120,8 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
         if (!decoder.startDecoding(outBuffer)) {
           return false
         }
-        pending.push({ decoder, out: this._contextSymbols[i], count: numSymbols })
+        pending.push(decoder)
+        streams.push({ ans: decoder.ans_, out: this._contextSymbols[i], count: numSymbols })
         // All symbols are going to be processed from the back.
         this._contextCounters[i] = numSymbols
       } else {
@@ -129,45 +130,8 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
       }
     }
 
-    // Decode three streams in lockstep while possible (the six contexts make
-    // two clean trios), then pairs, then a lone leftover. Only lut streams
-    // take part: short streams that chose the coarse tables (see
-    // ransBuildLookUpTable) decode alone, without dragging the big streams
-    // out of the lockstep loops.
-    const lockstep = pending.filter(entry => !entry.decoder.ans_.coarse)
-    let p = 0
-    while (lockstep.length - p >= 3) {
-      const a = lockstep[p]
-      const b = lockstep[p + 1]
-      const c = lockstep[p + 2]
-      ransDecodeSymbolsTrioU16(
-        a.decoder.ans_,
-        a.out,
-        a.count,
-        b.decoder.ans_,
-        b.out,
-        b.count,
-        c.decoder.ans_,
-        c.out,
-        c.count,
-      )
-      p += 3
-    }
-    if (lockstep.length - p === 2) {
-      const a = lockstep[p]
-      const b = lockstep[p + 1]
-      ransDecodeSymbolsPairU16(a.decoder.ans_, a.out, a.count, b.decoder.ans_, b.out, b.count)
-      p += 2
-    }
-    for (; p < lockstep.length; ++p) {
-      lockstep[p].decoder.ans_.decodeSymbols(lockstep[p].out, lockstep[p].count)
-    }
-    for (const entry of pending) {
-      if (entry.decoder.ans_.coarse) {
-        entry.decoder.ans_.decodeSymbols(entry.out, entry.count)
-      }
-      entry.decoder.endDecoding()
-    }
+    ransDecodeStreams(streams)
+    for (const decoder of pending) decoder.endDecoding()
     return true
   }
 

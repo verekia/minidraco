@@ -18,6 +18,9 @@ export type TraversalCacheEntry = {
   cornerMap: Int32Array
   numValues: number
   indicesMap: Uint32Array | null
+  // Filled in lazily by the first parallelogram-predicted attribute over
+  // this traversal (see MeshPredictionSchemeData.parallelogramParents).
+  parents: Int32Array | null
 }
 
 // Per-decode cache: corner-to-vertex array -> traversal method id -> result.
@@ -76,7 +79,7 @@ class MeshTraversalSequencer {
     const cached = byMethod && byMethod.get(methodId)
     if (cached !== undefined) {
       this._outPointIds = cached.pointIds
-      encodingData.adoptTraversalResult(cached.vertexMap, cached.cornerMap, cached.numValues)
+      encodingData.adoptTraversalResult(cached)
       this._cacheEntry = cached
       return true
     }
@@ -103,8 +106,10 @@ class MeshTraversalSequencer {
       cornerMap: encodingData.encodedAttributeValueIndexToCornerMap,
       numValues,
       indicesMap: null,
+      parents: null,
     }
     byMethod.set(methodId, entry)
+    encodingData.cacheEntry = entry
     this._cacheEntry = entry
     return true
   }
