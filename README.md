@@ -45,8 +45,8 @@ Median across 18 models vs [draco.js](https://github.com/mrdoob/draco.js) and th
 | benchmark                                          | vs draco.js     | vs draco3d wasm |
 | -------------------------------------------------- | --------------- | --------------- |
 | single-threaded decode — bun (JSC)                 | 🟢 1.60× faster | 🟢 1.69× faster |
-| single-threaded decode — Chrome (V8)               | 🟢 1.64× faster | 🟢 1.40× faster |
-| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.55× faster | ⚪ even         |
+| single-threaded decode — Chrome (V8)               | 🟢 1.57× faster | 🟢 1.43× faster |
+| `GLTFLoader.parse`, warm worker pool — Chrome (V8) | 🟢 1.57× faster | 🟢 1.06× faster |
 | `GLTFLoader.parse`, cold first load — Chrome (V8)  | 🟢 1.42× faster | 🟢 1.28× faster |
 
 ## Download size
