@@ -2,15 +2,16 @@
 
 import { decodeVarint } from './VarintDecoding'
 
+// Bit reader over bytes [start, end) of a buffer; offsets are absolute.
 export class BitDecoder {
   _bitBuffer: Uint8Array | null = null
   _bitOffset = 0
   _byteLength = 0
 
-  reset(uint8Array: Uint8Array, byteLength: number): void {
+  reset(uint8Array: Uint8Array, start: number, end: number): void {
     this._bitBuffer = uint8Array
-    this._byteLength = byteLength
-    this._bitOffset = 0
+    this._byteLength = end
+    this._bitOffset = start * 8
   }
 
   getBits(nbits: number): number | undefined {
@@ -59,9 +60,13 @@ export class BitDecoder {
   }
 }
 
+// Reinterprets four little-endian bytes as a float32 (decodeFloat32): one
+// small DataView for all buffers instead of one per buffer.
+const floatBytes = new Uint8Array(4)
+const floatView = new DataView(floatBytes.buffer)
+
 export class DecoderBuffer {
   _data: Uint8Array | null = null
-  _dataView: DataView | null = null
   _dataSize = 0
   _pos = 0
   _bitDecoder = new BitDecoder()
@@ -69,9 +74,16 @@ export class DecoderBuffer {
 
   init(data: Uint8Array, dataSize = data.length): void {
     this._data = data
-    this._dataView = new DataView(data.buffer, data.byteOffset, data.byteLength)
     this._dataSize = dataSize
     this._pos = 0
+  }
+
+  // Continues where `other` stands: same bytes, same position (offsets stay
+  // absolute, so no view of the remaining bytes is made).
+  initFrom(other: DecoderBuffer): void {
+    this._data = other._data
+    this._dataSize = other._dataSize
+    this._pos = other._pos
   }
 
   // Typed little-endian reads.
@@ -83,24 +95,31 @@ export class DecoderBuffer {
   }
 
   decodeUint16(): number | undefined {
-    if (this._pos + 2 > this._dataSize) return undefined
-    const val = this._dataView!.getUint16(this._pos, true)
-    this._pos += 2
-    return val
+    const pos = this._pos
+    if (pos + 2 > this._dataSize) return undefined
+    const data = this._data!
+    this._pos = pos + 2
+    return data[pos] | (data[pos + 1] << 8)
   }
 
   decodeInt32(): number | undefined {
-    if (this._pos + 4 > this._dataSize) return undefined
-    const val = this._dataView!.getInt32(this._pos, true)
-    this._pos += 4
-    return val
+    const pos = this._pos
+    if (pos + 4 > this._dataSize) return undefined
+    const data = this._data!
+    this._pos = pos + 4
+    return data[pos] | (data[pos + 1] << 8) | (data[pos + 2] << 16) | (data[pos + 3] << 24)
   }
 
   decodeFloat32(): number | undefined {
-    if (this._pos + 4 > this._dataSize) return undefined
-    const val = this._dataView!.getFloat32(this._pos, true)
-    this._pos += 4
-    return val
+    const pos = this._pos
+    if (pos + 4 > this._dataSize) return undefined
+    const data = this._data!
+    this._pos = pos + 4
+    floatBytes[0] = data[pos]
+    floatBytes[1] = data[pos + 1]
+    floatBytes[2] = data[pos + 2]
+    floatBytes[3] = data[pos + 3]
+    return floatView.getFloat32(0, true)
   }
 
   // A view into the stream (no copy), only valid until the caller's next
@@ -122,13 +141,13 @@ export class DecoderBuffer {
       outSize = size
     }
     this._bitMode = true
-    this._bitDecoder.reset(this._data!.subarray(this._pos), this._dataSize - this._pos)
+    this._bitDecoder.reset(this._data!, this._pos, this._dataSize)
     return outSize
   }
 
   endBitDecoding(): void {
     this._bitMode = false
-    this._pos += Math.ceil(this._bitDecoder._bitOffset / 8)
+    this._pos = Math.ceil(this._bitDecoder._bitOffset / 8)
   }
 
   decodeLeastSignificantBits32(nbits: number): number | undefined {
@@ -142,9 +161,6 @@ export class DecoderBuffer {
 
   get data(): Uint8Array {
     return this._data!
-  }
-  get dataHead(): Uint8Array {
-    return this._data!.subarray(this._pos)
   }
   get remainingSize(): number {
     return this._dataSize - this._pos

@@ -2,6 +2,8 @@
 
 import { DecoderBuffer } from '../../core/DecoderBuffer'
 import {
+  EMPTY_INT32,
+  EMPTY_UINT8,
   scratchInt32,
   scratchInt32Filled,
   scratchUint8,
@@ -46,7 +48,7 @@ class MeshEdgebreakerDecoderImpl {
   _decoder: MeshEdgebreakerDecoder
   _cornerTable: CornerTable | null = null
   _topologySplitData: TopologySplitEventData[] = []
-  _isVertHole: Uint8Array = new Uint8Array(0)
+  _isVertHole: Uint8Array = EMPTY_UINT8
   _numEncodedVertices = 0
   _posEncodingData = new MeshAttributeIndicesEncodingData()
   _posDataDecoderId = -1
@@ -56,10 +58,12 @@ class MeshEdgebreakerDecoderImpl {
   _attributeData: AttributeData[] = []
   _traversalDecoder: MeshEdgebreakerTraversalDecoder
   // One corner per point id (decode-scoped scratch), filled by
-  // _assignAttributeVerticesAndPoints; null when points are the base vertices.
+  // _assignAttributeVerticesAndPoints; null for a mesh without attribute data
+  // (see _assignPointsToVertices).
   _pointCorner: Int32Array | null = null
-  // Corners on a boundary edge, counted by _decodeAttributeConnectivities.
-  _numBoundaryCorners = 0
+  // The corner table whose vertex ids are the point ids, if any (see
+  // MeshTraversalSequencer.updatePointToAttributeIndexMapping).
+  _pointVertexTable: CornerTable | MeshAttributeCornerTable | null = null
 
   constructor(decoder: MeshEdgebreakerDecoder, TraversalDecoderClass: new () => MeshEdgebreakerTraversalDecoder) {
     this._decoder = decoder
@@ -151,7 +155,13 @@ class MeshEdgebreakerDecoderImpl {
     }
 
     const mesh = this._decoder.mesh()!
-    const sequencer = new MeshTraversalSequencer(mesh, encodingData, this._vertexTraversalCache, this._pointCorner)
+    const sequencer = new MeshTraversalSequencer(
+      mesh,
+      encodingData,
+      this._vertexTraversalCache,
+      this._pointCorner,
+      this._pointVertexTable,
+    )
     const observer = new MeshAttributeIndicesEncodingObserver(mesh, sequencer, encodingData)
     const traverser =
       traversalMethod === MeshTraversalMethod.MESH_TRAVERSAL_PREDICTION_DEGREE
@@ -242,7 +252,7 @@ class MeshEdgebreakerDecoderImpl {
       return false
     }
 
-    buffer.init(traversalEndBuffer.dataHead, traversalEndBuffer.remainingSize)
+    buffer.initFrom(traversalEndBuffer)
     this._cornerTable.finishBoundaries()
 
     if (this._attributeData.length > 0) {
@@ -250,27 +260,24 @@ class MeshEdgebreakerDecoderImpl {
     }
     this._traversalDecoder.done()
 
-    // _decodeAttributeConnectivities lists each seam edge exactly once, at its
-    // lower-face corner, in increasing corner order -- so two attribute data
-    // sets have the same seams exactly when their seam-corner lists match.
-    // Comparing those lists (a few entries per seam) instead of the derived
-    // per-corner seam flags lets a matching set skip building its flags and
-    // vertex maps entirely, rather than building them and then discovering they
-    // were redundant.
+    // _decodeAttributeConnectivities lists each interior seam edge exactly
+    // once, at its lower-face corner, in increasing corner order -- so two
+    // attribute data sets have the same seams exactly when their seam-corner
+    // lists match. Comparing those lists (a few entries per seam) instead of
+    // the derived per-corner seam flags lets a matching set skip building its
+    // flags and vertex maps entirely, rather than building them and then
+    // discovering they were redundant.
     //
     // The distinct sets' attribute-vertex maps are then built together with the
     // point assignment in one fused pass over the vertex rings (see
     // _assignAttributeVerticesAndPoints); a set that matches its predecessor
     // adopts that predecessor's finished maps afterwards.
     //
-    // Every boundary edge is a seam of every set, so a set whose seam count
-    // equals the boundary-corner count has no interior seams at all. Such an
-    // attribute is mapped per vertex by the encoder (its decoder uses the
-    // base corner table, see createAttributesDecoder), so its table is not
-    // built here -- its numbering would only be thrown away -- and it plays no
-    // part in the point assignment either, since it splits no vertex. Should
-    // a per-corner decoder ask for it anyway, it is built then.
-    const numBoundaryCorners = this._numBoundaryCorners
+    // A set with no interior seam is mapped per vertex by the encoder (its
+    // decoder uses the base corner table, see createAttributesDecoder), so its
+    // table is not built here -- its numbering would only be thrown away --
+    // and it plays no part in the point assignment either, since it splits no
+    // vertex. Should a per-corner decoder ask for it anyway, it is built then.
     const distinctTables: MeshAttributeCornerTable[] = []
     const seamEdgeCounts: number[] = []
     const adoptions: MeshAttributeCornerTable[] = []
@@ -282,7 +289,7 @@ class MeshEdgebreakerDecoderImpl {
       // Indexed loop avoids a for..of iterator per seam.
       const seamCorners = this._attributeData[i].attributeSeamCorners
       const seamCount = this._attributeData[i].numSeamCorners
-      if (seamCount === numBoundaryCorners) {
+      if (seamCount === 0) {
         this._attributeData[i].noInteriorSeams = true
         continue
       }
@@ -784,8 +791,8 @@ class MeshEdgebreakerDecoderImpl {
   //
   // The face comparison the C++ makes -- floor(oppCorner/3) >= floor(cc/3) for
   // the face's base corner -- is just `oppCorner >= faceBaseCorner`, since the
-  // base corner is a multiple of 3. That removes the per-corner division; the
-  // invalid-corner case (-1) is still handled by the branch above it.
+  // base corner is a multiple of 3. That removes the per-corner division, and
+  // an invalid (-1) opposite fails it too.
   _decodeAttributeConnectivities(): void {
     const oppositeCorners = this._cornerTable!.oppositeCornerArray()
     const attributeData = this._attributeData
@@ -793,36 +800,27 @@ class MeshEdgebreakerDecoderImpl {
     const connectivityDecoders = this._traversalDecoder._attributeConnectivityDecoders!
     const numCorners = this._cornerTable!.numCorners()
 
-    // Two passes: list the corners that carry a decision once (boundary
-    // corners, always seams, stored bit-inverted; interior edges at their
-    // lower-face corner), then run each set's rANS bit stream over that list
-    // with the decoder state in locals -- the same per-corner decisions in the
-    // same order, without a real decodeNextBit() call per set per corner and
-    // without a data-dependent branch per corner on the edge kind: the
-    // candidate is always stored and the list only advances for boundary
-    // corners (opposite < 0) and lower-face interior corners (opposite >=
-    // face base, i.e. faceBase - opposite - 1 < 0). Decode-scoped scratch,
-    // written before it is read.
+    // Two passes: list the corners that carry a seam bit once (each interior
+    // edge at its lower-face corner), then run each set's rANS bit stream over
+    // that list with the decoder state in locals -- the same per-corner
+    // decisions in the same order, without a real decodeNextBit() call per set
+    // per corner and without a data-dependent branch per corner on the edge
+    // kind: the candidate is always stored and the list only advances for
+    // lower-face interior corners (opposite >= face base, i.e. faceBase -
+    // opposite - 1 < 0; a boundary corner's -1 never is). Boundary edges carry
+    // no bit and are left out: every set has a seam there, which the base
+    // opposite table already records, so the sets' seam lists hold interior
+    // seams only. Decode-scoped scratch, written before it is read.
     const candidates = scratchInt32(numCorners)
     let numCandidates = 0
-    // Boundary corners counted alongside: a set with exactly that many seam
-    // corners has no interior seams (see decodeConnectivity).
-    let numBoundaryCorners = 0
     for (let corner = 0; corner < numCorners; corner += 3) {
-      let opp = oppositeCorners[corner]
-      candidates[numCandidates] = corner ^ (opp >> 31)
-      numCandidates -= (opp | (corner - opp - 1)) >> 31
-      numBoundaryCorners -= opp >> 31
-      opp = oppositeCorners[corner + 1]
-      candidates[numCandidates] = (corner + 1) ^ (opp >> 31)
-      numCandidates -= (opp | (corner - opp - 1)) >> 31
-      numBoundaryCorners -= opp >> 31
-      opp = oppositeCorners[corner + 2]
-      candidates[numCandidates] = (corner + 2) ^ (opp >> 31)
-      numCandidates -= (opp | (corner - opp - 1)) >> 31
-      numBoundaryCorners -= opp >> 31
+      candidates[numCandidates] = corner
+      numCandidates -= (corner - oppositeCorners[corner] - 1) >> 31
+      candidates[numCandidates] = corner + 1
+      numCandidates -= (corner - oppositeCorners[corner + 1] - 1) >> 31
+      candidates[numCandidates] = corner + 2
+      numCandidates -= (corner - oppositeCorners[corner + 2] - 1) >> 31
     }
-    this._numBoundaryCorners = numBoundaryCorners
     // The sets' bit streams are independent serial chains (each bit's state
     // feeds the next), so two of them are decoded in lockstep over the shared
     // candidate list, overlapping the chains in the CPU pipeline. (A
@@ -913,6 +911,25 @@ class MeshEdgebreakerDecoderImpl {
     const baseOnBoundary = ct.vertexOnBoundaryArray()
 
     const numTables = tables.length
+    if (numTables === 0) {
+      // No vertex is split, so the points are the vertices with corners, in
+      // vertex order; when no vertex is isolated either, they are the vertices
+      // themselves, and each one's leftmost corner stands for it.
+      let isolated = false
+      for (let v = 0; v < numVertices; ++v) {
+        if (vertexLeftmost[v] < 0) {
+          isolated = true
+          break
+        }
+      }
+      if (!isolated) {
+        faces.set(baseCornerToVertex)
+        this._pointCorner = vertexLeftmost
+        this._pointVertexTable = ct
+        this._decoder.pointCloud()!.setNumPoints(numVertices)
+        return true
+      }
+    }
     const attCornerToVertex = new Array<Int32Array>(numTables)
     const attOpposite = new Array<Int32Array>(numTables)
     const vertexOnSeam = new Array<Uint8Array>(numTables)
@@ -938,15 +955,16 @@ class MeshEdgebreakerDecoderImpl {
     // it -- computed once here instead of once per table), and one corner per
     // point (a point's corners all share every attribute vertex, so any one
     // stands for it). All written before they are read.
-    const ring = scratchInt32(numCorners)
-    const ringNext = scratchInt32(numCorners)
+    const ringSize = numTables > 0 ? numCorners : 0
+    const ring = scratchInt32(ringSize)
+    const ringNext = scratchInt32(ringSize)
     const pointCorner = scratchInt32(numCorners)
     // Per corner, set when the attribute vertex of ANY table changes between
     // the corner and its CW predecessor in the ring -- recorded as the ids are
     // assigned, so the point dedup below reads one byte per corner instead of
     // comparing every table's id with the previous corner's. Each corner is
     // in exactly one ring, so the zeroed array is written at most once.
-    const idChange = scratchUint8Zeroed(numCorners)
+    const idChange = scratchUint8Zeroed(ringSize)
     let numPoints = 0
     // -1 for walked (seam) vertices; isolated vertices have no corners and
     // are never read.
@@ -1106,13 +1124,12 @@ class MeshEdgebreakerDecoderImpl {
 }
 
 // One attribute data set's seam decisions over the candidate corners (see
-// _decodeAttributeConnectivities): a stored boundary corner (bit-inverted) is
-// a seam outright; an interior edge takes one bit of the set's rANS bit
-// stream. Inlined RAnsBitDecoder.decodeNextBit(), branch-free: the bit's
-// value is unpredictable, so instead of branching on it the corner is always
-// stored and the list only advances when the bit is set (mask = -1 exactly
-// when rem < p, i.e. decodeNextBit() === true). The two-set variant runs
-// the same steps for both sets per candidate.
+// _decodeAttributeConnectivities): each interior edge takes one bit of the
+// set's rANS bit stream. Inlined RAnsBitDecoder.decodeNextBit(), branch-free:
+// the bit's value is unpredictable, so instead of branching on it the corner
+// is always stored and the list only advances when the bit is set (mask = -1
+// exactly when rem < p, i.e. decodeNextBit() === true). The two-set variant
+// runs the same steps for both sets per candidate.
 function decodeSeamBits1(candidates: Int32Array, numCandidates: number, ad: AttributeData, decoder: RAnsBitDecoder) {
   const seamCorners = ad.attributeSeamCorners
   let numSeamCorners = ad.numSeamCorners
@@ -1123,11 +1140,6 @@ function decodeSeamBits1(candidates: Int32Array, numCandidates: number, ad: Attr
   let state = ans.state
   let bufOffset = ans.bufOffset
   for (let n = 0; n < numCandidates; ++n) {
-    const cc = candidates[n]
-    if (cc < 0) {
-      seamCorners[numSeamCorners++] = ~cc
-      continue
-    }
     if (state < ANS_L_BASE && bufOffset > bufStart) {
       state = (state << 8) | buf[--bufOffset]
     }
@@ -1136,7 +1148,7 @@ function decodeSeamBits1(candidates: Int32Array, numCandidates: number, ad: Attr
     const mask = (rem - p) >> 31
     const stateIfZero = state - xn - p
     state = stateIfZero + (mask & (xn + rem - stateIfZero))
-    seamCorners[numSeamCorners] = cc
+    seamCorners[numSeamCorners] = candidates[n]
     numSeamCorners -= mask
   }
   ans.state = state
@@ -1170,11 +1182,6 @@ function decodeSeamBits2(
   let off1 = ans1.bufOffset
   for (let n = 0; n < numCandidates; ++n) {
     const cc = candidates[n]
-    if (cc < 0) {
-      seam0[num0++] = ~cc
-      seam1[num1++] = ~cc
-      continue
-    }
     if (state0 < ANS_L_BASE && off0 > start0) {
       state0 = (state0 << 8) | buf0[--off0]
     }
@@ -1206,8 +1213,8 @@ function decodeSeamBits2(
 
 // Helper class for mesh attribute indices encoding data.
 class MeshAttributeIndicesEncodingData {
-  vertexToEncodedAttributeValueIndexMap: Int32Array = new Int32Array(0)
-  encodedAttributeValueIndexToCornerMap: Int32Array = new Int32Array(0)
+  vertexToEncodedAttributeValueIndexMap: Int32Array = EMPTY_INT32
+  encodedAttributeValueIndexToCornerMap: Int32Array = EMPTY_INT32
   numValues = 0
   // The traversal cache entry the maps came from (see MeshTraversalSequencer);
   // carries what later passes derive from the traversal and share.
@@ -1244,9 +1251,9 @@ class AttributeData {
   connectivityData = new MeshAttributeCornerTable()
   isConnectivityUsed = true
   encodingData = new MeshAttributeIndicesEncodingData()
-  attributeSeamCorners: Int32Array = new Int32Array(0)
+  attributeSeamCorners: Int32Array = EMPTY_INT32
   numSeamCorners = 0
-  // Set when every seam is a boundary edge and connectivityData was therefore
+  // Set when the set has no interior seam and connectivityData was therefore
   // left unbuilt (see decodeConnectivity); cleared once it is built on demand.
   noInteriorSeams = false
 }

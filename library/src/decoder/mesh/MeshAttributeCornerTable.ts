@@ -1,6 +1,6 @@
 // Ported from draco.js src/mesh/MeshAttributeCornerTable.js (MIT)
 
-import { scratchInt32, scratchUint8Zeroed } from '../core/ScratchArena'
+import { EMPTY_INT32, EMPTY_UINT8, scratchInt32, scratchUint8Zeroed } from '../core/ScratchArena'
 
 import type { CornerTable } from '../compression/mesh/MeshEdgebreakerDecoderImpl'
 
@@ -17,13 +17,13 @@ const kInvalidCornerIndex = -1
 // numbering is copied and patched rather than rebuilt corner by corner.
 class MeshAttributeCornerTable {
   // Base vertices touched by a seam edge of this table.
-  is_vertex_on_seam_: Uint8Array = new Uint8Array(0)
-  corner_to_vertex_map_: Int32Array = new Int32Array(0)
+  is_vertex_on_seam_: Uint8Array = EMPTY_UINT8
+  corner_to_vertex_map_: Int32Array = EMPTY_INT32
   // Attribute vertex -> 1 when its fan is open in this table (see
   // CornerTable._vertexOnBoundary). The C++ also keeps each attribute
   // vertex's left-most corner, but the decoder only ever asked it whether
   // that corner sits on a boundary, which this answers directly.
-  _vertexOnBoundary: Uint8Array = new Uint8Array(0)
+  _vertexOnBoundary: Uint8Array = EMPTY_UINT8
   // Attribute-vertex count. C++ keeps a vertex -> attribute-entry map here, but
   // the decoder only ever reads its size, so track the count directly instead
   // of allocating an Int32Array per attribute corner table.
@@ -31,7 +31,7 @@ class MeshAttributeCornerTable {
   corner_table_: CornerTable | null = null
   // The base table's opposite corners with both corners of every seam edge
   // set to -1: what opposite() answers, and what the traversals read.
-  _opposite: Int32Array = new Int32Array(0)
+  _opposite: Int32Array = EMPTY_INT32
 
   // Starts the table as a copy of the base connectivity; addSeamEdge then
   // cuts the seams and the ring pass numbers the vertices. Decode-scoped
@@ -49,7 +49,10 @@ class MeshAttributeCornerTable {
     this.num_attribute_vertices_ = 0
   }
 
-  // Cuts the edge opposite corner c (and its twin) and flags its two vertices.
+  // Cuts the interior edge opposite corner c (and its twin) and flags its two
+  // vertices. (Boundary edges are open in the base table already, and flagging
+  // their vertices would only send them through the ring walk to come out
+  // unsplit.)
   addSeamEdge(c: number): void {
     const cornerToVertex = this.corner_table_!.cornerToVertexArray()
     const opposite = this._opposite
@@ -57,17 +60,11 @@ class MeshAttributeCornerTable {
 
     const oppCorner = opposite[c]
     opposite[c] = kInvalidCornerIndex
-    // Inlined next(c)/previous(c).
-    let rem = c - ((c / 3) | 0) * 3
+    opposite[oppCorner] = kInvalidCornerIndex
+    // Inlined next(c)/previous(c); the twin edge has the same two vertices.
+    const rem = c - ((c / 3) | 0) * 3
     isVert[cornerToVertex[rem === 2 ? c - 2 : c + 1]] = 1
     isVert[cornerToVertex[rem === 0 ? c + 2 : c - 1]] = 1
-
-    if (oppCorner !== kInvalidCornerIndex) {
-      opposite[oppCorner] = kInvalidCornerIndex
-      rem = oppCorner - ((oppCorner / 3) | 0) * 3
-      isVert[cornerToVertex[rem === 2 ? oppCorner - 2 : oppCorner + 1]] = 1
-      isVert[cornerToVertex[rem === 0 ? oppCorner + 2 : oppCorner - 1]] = 1
-    }
   }
 
   // Installs the vertex numbering computed by the edgebreaker decoder's ring

@@ -60,16 +60,14 @@ class MeshPredictionSchemeGeometricNormalDecoder extends MeshPredictionSchemeDec
 
     const cornerMapSize = this._meshData.dataToCornerMap.length
 
-    // Cache integer positions once so the per-corner ring traversal reads from
-    // a flat array instead of mappedIndex + convertValue per fetch.
-    this._predictor.buildPositionCache(cornerMapSize)
+    // Every value's area-weighted normal, in one pass over the faces.
+    if (!this._predictor.computeNormalSums(cornerMapSize)) return false
 
     const predNormal3D = new Int32Array(3)
     const predNormalOct = new Int32Array(2)
 
     for (let dataId = 0; dataId < cornerMapSize; ++dataId) {
-      const cornerId = this._meshData.dataToCornerMap[dataId]
-      this._predictor.computePredictedValue(cornerId, predNormal3D)
+      this._predictor.computePredictedValue(dataId, predNormal3D)
 
       this._octahedronToolBox.canonicalizeIntegerVector(predNormal3D)
 

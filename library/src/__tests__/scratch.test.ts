@@ -1,4 +1,4 @@
-// The decoder borrows most of its per-primitive working memory from a pooled,
+// The decoder borrows most of its per-primitive working memory from a
 // decode-scoped arena (see core/ScratchArena) that is recycled as soon as a
 // decode returns. Nothing a decode hands back may point into that memory, so
 // this suite decodes the whole local corpus keeping every Mesh alive, churns
@@ -11,6 +11,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 
+import { releaseScratch, scratchInt32, scratchUint8, scratchUint32 } from '../decoder/core/ScratchArena'
 import { decodeDracoMesh } from '../index'
 
 import type { Mesh } from '../index'
@@ -115,5 +116,31 @@ describe('decode results outlive the scratch arena', () => {
     retained.forEach((mesh, index) => {
       expect({ index, values: snapshot(mesh) }).toEqual({ index, values: expected[index] })
     })
+  })
+})
+
+describe('scratch arena', () => {
+  test('views borrowed in one decode never overlap, across arena growth', () => {
+    // Borrows of mixed types and sizes within one "decode", each filled with
+    // its own pattern; every 40th is large enough to outgrow whatever the
+    // arena holds (earlier decodes size it to their need).
+    const views: (Int32Array | Uint32Array | Uint8Array)[] = []
+    let big = 1 << 18
+    for (let i = 0; i < 200; i++) {
+      const size = i % 40 === 39 ? (big *= 2) : (i * 7919) % 5000
+      const view = i % 3 === 0 ? scratchInt32(size) : i % 3 === 1 ? scratchUint32(size) : scratchUint8(size)
+      expect(view.length).toBe(size)
+      view.fill(i & 0xff)
+      views.push(view)
+    }
+    views.forEach((view, i) => {
+      expect(view.every(value => value === (i & 0xff))).toBe(true)
+    })
+    releaseScratch()
+    // After the release the arena holds the whole need of that decode at once.
+    const again = scratchInt32(100)
+    again.fill(7)
+    expect(again.every(value => value === 7)).toBe(true)
+    releaseScratch()
   })
 })

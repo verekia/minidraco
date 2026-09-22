@@ -1,126 +1,81 @@
-// Decode-scoped scratch arena: pooled typed-array buffers for allocations
-// whose lifetime is a single decode (traversal flags, seam-patched opposite
-// tables, connectivity stacks, attribute corner tables, ...). Buffers are
-// borrowed during a decode and returned all at once by releaseScratch(),
+// Decode-scoped scratch arena for allocations whose lifetime is a single
+// decode (traversal flags, seam-patched opposite tables, connectivity stacks,
+// attribute corner tables, ...): typed-array views carved out of one reusable
+// ArrayBuffer by bumping an offset, all returned at once by releaseScratch(),
 // called at the end of decodeMeshFromBuffer — decodes are synchronous and
-// never interleave, so a module-level pool is safe (each worker has its own
+// never interleave, so a module-level arena is safe (each worker has its own
 // module instance).
 //
-// Borrowed buffers may be larger than requested, so callers either must not
-// read .length or must use the exact-size subarray the acquire functions
-// return. Buffers come back with arbitrary contents; use the *Zeroed / *Filled
-// variants when the algorithm relies on initialization.
+// A primitive-heavy file borrows a couple of dozen buffers per primitive, most
+// of them small, so a borrow is a bump and a view, and the release a reset:
+// no free lists, no per-buffer bookkeeping. Views come back with arbitrary
+// contents; use the *Zeroed / *Filled variants when the algorithm relies on
+// initialization. Nothing may reinterpret a scratch view's underlying buffer
+// (it is shared).
+let arena = new ArrayBuffer(1 << 16)
+// Next free byte of the current arena, and the bytes borrowed by this decode
+// from arenas it has already outgrown.
+let top = 0
+let outgrown = 0
 
-// Buffers are pooled by power-of-two size class, so a request is O(1): pick
-// the class, pop. A linear best-fit scan over one flat free list showed up in
-// profiles once a decode started borrowing a dozen buffers per primitive.
-//
-// The first buffer in a class is allocated at exactly the requested size, so a
-// homogeneous workload (the same model, or same-shaped primitives) wastes
-// nothing. Only when a later request in the same class does not fit is the
-// buffer replaced by a full class-sized one, after which every request in the
-// class fits. Requests too large to pool are served by a plain allocation.
-const MAX_CLASS = 28
-const freeInt32: Int32Array[][] = []
-const freeUint32: Uint32Array[][] = []
-const freeUint8: Uint8Array[][] = []
-for (let i = 0; i <= MAX_CLASS; ++i) {
-  freeInt32.push([])
-  freeUint32.push([])
-  freeUint8.push([])
+// Byte offset of a new 8-byte-aligned block of `bytes` bytes. When the arena
+// is full, the decode continues in a fresh one (views into the old one stay
+// valid; it is dropped once they are), and the release sizes the arena to
+// the decode's whole need so a like decode fits next time.
+const carve = (bytes: number): number => {
+  const size = (bytes + 7) & ~7
+  if (top + size > arena.byteLength) {
+    outgrown += top
+    arena = new ArrayBuffer(Math.max(arena.byteLength * 2, size))
+    top = 0
+  }
+  const offset = top
+  top += size
+  return offset
 }
-const borrowedInt32: Int32Array[] = []
-const borrowedUint32: Uint32Array[] = []
-const borrowedUint8: Uint8Array[] = []
 
-// Smallest k with (1 << k) >= size.
-const sizeClass = (size: number): number => (size <= 1 ? 0 : 32 - Math.clz32(size - 1))
-
-// Exact-size view over a pooled buffer; contents are arbitrary.
+// (carve first: it may replace the arena the view is taken of.)
 export const scratchInt32 = (size: number): Int32Array => {
-  const k = sizeClass(size)
-  if (k > MAX_CLASS) return new Int32Array(size)
-  const bucket = freeInt32[k]
-  let pooled = bucket.length > 0 ? bucket.pop()! : new Int32Array(size)
-  if (pooled.length < size) pooled = new Int32Array(1 << k)
-  borrowedInt32.push(pooled)
-  return pooled.length === size ? pooled : pooled.subarray(0, size)
+  const offset = carve(size * 4)
+  return new Int32Array(arena, offset, size)
 }
 
-// Exact-size view over a pooled buffer; contents are arbitrary.
 export const scratchUint32 = (size: number): Uint32Array => {
-  const k = sizeClass(size)
-  if (k > MAX_CLASS) return new Uint32Array(size)
-  const bucket = freeUint32[k]
-  let pooled = bucket.length > 0 ? bucket.pop()! : new Uint32Array(size)
-  if (pooled.length < size) pooled = new Uint32Array(1 << k)
-  borrowedUint32.push(pooled)
-  return pooled.length === size ? pooled : pooled.subarray(0, size)
+  const offset = carve(size * 4)
+  return new Uint32Array(arena, offset, size)
 }
 
-// Byte buffers back attribute storage that callers reinterpret as Int32 /
-// Float32 views over the whole underlying ArrayBuffer, which requires the
-// buffer's byte length to be a multiple of the element size -- so round every
-// pooled byte allocation up to 8.
-const byteCapacity = (size: number): number => (size < 8 ? 8 : (size + 7) & ~7)
-
-// Exact-size view over a pooled buffer; contents are arbitrary.
 export const scratchUint8 = (size: number): Uint8Array => {
-  const capacity = byteCapacity(size)
-  const k = sizeClass(capacity)
-  if (k > MAX_CLASS) return new Uint8Array(capacity)
-  const bucket = freeUint8[k]
-  let pooled = bucket.length > 0 ? bucket.pop()! : new Uint8Array(capacity)
-  if (pooled.length < size) pooled = new Uint8Array(1 << k)
-  borrowedUint8.push(pooled)
-  return pooled.length === size ? pooled : pooled.subarray(0, size)
+  const offset = carve(size)
+  return new Uint8Array(arena, offset, size)
 }
 
-// Exact-size view over a pooled buffer, with every entry set to `value`.
-export const scratchInt32Filled = (size: number, value: number): Int32Array => {
-  const view = scratchInt32(size)
-  view.fill(value)
-  return view
-}
+// With every entry set to `value`.
+export const scratchInt32Filled = (size: number, value: number): Int32Array => scratchInt32(size).fill(value)
 
-// Exact-size view over a pooled buffer, cleared to 0.
-export const scratchUint32Zeroed = (size: number): Uint32Array => {
-  const view = scratchUint32(size)
-  view.fill(0)
-  return view
-}
+// Cleared to 0.
+export const scratchUint32Zeroed = (size: number): Uint32Array => scratchUint32(size).fill(0)
 
-// Exact-size view over a pooled buffer, cleared to 0.
-export const scratchUint8Zeroed = (size: number): Uint8Array => {
-  const view = scratchUint8(size)
-  view.fill(0)
-  return view
-}
+// Cleared to 0.
+export const scratchUint8Zeroed = (size: number): Uint8Array => scratchUint8(size).fill(0)
 
-// Exact-size view over a pooled buffer, with every byte set to `value`.
-export const scratchUint8Filled = (size: number, value: number): Uint8Array => {
-  const view = scratchUint8(size)
-  view.fill(value)
-  return view
-}
+// With every byte set to `value`.
+export const scratchUint8Filled = (size: number, value: number): Uint8Array => scratchUint8(size).fill(value)
 
-// Returns every borrowed buffer to the pool. Nothing may hold on to a scratch
-// buffer past this point — it runs when the decode's result mesh no longer
+// Placeholders for decode-internal typed-array fields until their real
+// (scratch) arrays are assigned: one shared instance of each type instead of
+// a fresh empty array per field per primitive. Never for anything that can
+// reach the caller (which might transfer its buffer).
+export const EMPTY_INT32 = new Int32Array(0)
+export const EMPTY_UINT8 = new Uint8Array(0)
+
+// Returns every borrowed view to the arena. Nothing may hold on to a scratch
+// view past this point — it runs when the decode's result mesh no longer
 // references any of them (result data lives in attribute buffers / faces_).
 export const releaseScratch = (): void => {
-  for (let i = 0; i < borrowedInt32.length; ++i) {
-    const buffer = borrowedInt32[i]
-    freeInt32[sizeClass(buffer.length)].push(buffer)
+  if (outgrown > 0) {
+    arena = new ArrayBuffer(outgrown + top)
+    outgrown = 0
   }
-  for (let i = 0; i < borrowedUint32.length; ++i) {
-    const buffer = borrowedUint32[i]
-    freeUint32[sizeClass(buffer.length)].push(buffer)
-  }
-  for (let i = 0; i < borrowedUint8.length; ++i) {
-    const buffer = borrowedUint8[i]
-    freeUint8[sizeClass(buffer.length)].push(buffer)
-  }
-  borrowedInt32.length = 0
-  borrowedUint32.length = 0
-  borrowedUint8.length = 0
+  top = 0
 }

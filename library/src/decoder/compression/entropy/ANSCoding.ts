@@ -104,8 +104,8 @@ export class RAnsDecoder {
   bucketShift = 0
   // Uint16 unless the alphabet needs wider ids, so real streams keep one table type.
   bucketTable: Uint16Array | Uint32Array | null = null
-  // Stream state inlined (not a nested AnsDecoder) so the ransRead() hot loop
-  // touches own props; initialized by ansReadInit.
+  // Stream state inlined (not a nested AnsDecoder) so the decode loops touch
+  // own props; initialized by ansReadInit.
   buf: Uint8Array | null = null
   bufOffset = 0
   // First valid byte of this decoder's slice within buf (absolute offsets,
@@ -141,33 +141,8 @@ export class RAnsDecoder {
     return this.state === this.lRansBase
   }
 
-  ransRead(): number {
-    // Cache state in locals for the renormalization loop: read once, write back once.
-    const buf = this.buf!
-    const lRansBase = this.lRansBase
-    let state = this.state
-    let bufOffset = this.bufOffset
-    const bufStart = this.bufStart
-    while (state < lRansBase && bufOffset > bufStart) {
-      state = (state << 8) | buf[--bufOffset]
-    }
-    const quo = state >>> this.ransPrecisionBits
-    const rem = state & this.ransPrecisionMask
-    let symbol: number
-    if (this.coarse) {
-      const cumProbTable = this.cumProbTable!
-      symbol = this.bucketTable![rem >> this.bucketShift]
-      while (cumProbTable[symbol + 1] <= rem) symbol++
-    } else {
-      symbol = this.lutTable![rem]
-    }
-    this.state = quo * this.probTable![symbol] + rem - this.cumProbTable![symbol]
-    this.bufOffset = bufOffset
-    return symbol
-  }
-
-  // Batch ransRead() into out[0..count): all fields hoisted to locals, state
-  // written back once. Removes per-symbol property reads and call indirection.
+  // Decodes count symbols into out[0..count): all fields hoisted to locals,
+  // state written back once.
   decodeSymbols(out: Uint32Array, count: number): void {
     if (this.coarse) {
       this._decodeSymbolsCoarse(out, count)
@@ -287,7 +262,7 @@ export class RAnsDecoder {
     }
 
     // lutTable is indexed by `rem` (random in [0, ransPrecision)), so it's the
-    // hottest random read in decodeSymbols()/ransRead(). Its values are symbol
+    // hottest random read in the decode loops. Its values are symbol
     // ids (< numSymbols <= 65536). A Uint8 table for the smallest alphabets
     // measured no faster -- those have the smallest precision, so either table
     // sits in L1 -- and would double the lockstep loop variants below.

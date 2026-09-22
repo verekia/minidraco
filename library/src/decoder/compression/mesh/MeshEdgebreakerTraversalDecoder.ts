@@ -21,7 +21,7 @@ class MeshEdgebreakerTraversalDecoder {
 
   init(decoder: MeshEdgebreakerDecoderImpl): void {
     const srcBuffer = decoder._decoder.buffer()!
-    this._buffer.init(srcBuffer.dataHead, srcBuffer.remainingSize)
+    this._buffer.initFrom(srcBuffer)
   }
 
   // Ignored by default; overridden by predictive/valence decoders.
@@ -42,7 +42,7 @@ class MeshEdgebreakerTraversalDecoder {
     if (!this.decodeAttributeSeams()) {
       return false
     }
-    outBuffer.init(this._buffer.dataHead, this._buffer.remainingSize)
+    outBuffer.initFrom(this._buffer)
     return true
   }
 
@@ -96,14 +96,14 @@ class MeshEdgebreakerTraversalDecoder {
   }
 
   decodeTraversalSymbols(): boolean {
-    this._symbolBuffer.init(this._buffer.dataHead, this._buffer.remainingSize)
+    this._symbolBuffer.initFrom(this._buffer)
     const traversalSize = this._symbolBuffer.startBitDecoding(true)
     if (traversalSize === undefined) {
       return false
     }
     this._symbolBits = this._symbolBuffer._bitDecoder
     // Advance the main buffer past the symbol data.
-    this._buffer.init(this._symbolBuffer.dataHead, this._symbolBuffer.remainingSize)
+    this._buffer.initFrom(this._symbolBuffer)
     if (traversalSize > this._buffer.remainingSize) {
       return false
     }

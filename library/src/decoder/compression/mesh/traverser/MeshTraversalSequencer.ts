@@ -1,11 +1,12 @@
 // Ported from draco.js src/compression/mesh/traverser/MeshTraversalSequencer.js (MIT)
 
-import { scratchInt32 } from '../../../core/ScratchArena'
+import { EMPTY_INT32, scratchInt32 } from '../../../core/ScratchArena'
+import { DepthFirstTraverser } from './DepthFirstTraverser'
 
 import type { PointAttribute } from '../../../attributes/PointAttribute'
 import type { Mesh } from '../../../mesh/Mesh'
-import type { MeshAttributeIndicesEncodingData } from '../MeshEdgebreakerDecoderImpl'
-import type { DepthFirstTraverser } from './DepthFirstTraverser'
+import type { MeshAttributeCornerTable } from '../../../mesh/MeshAttributeCornerTable'
+import type { CornerTable, MeshAttributeIndicesEncodingData } from '../MeshEdgebreakerDecoderImpl'
 import type { MaxPredictionDegreeTraverser } from './MaxPredictionDegreeTraverser'
 
 // Cached result of one traversal (see generateSequence below). indicesMap is
@@ -32,7 +33,7 @@ class MeshTraversalSequencer {
   _mesh: Mesh
   _encodingData: MeshAttributeIndicesEncodingData
   _traverser: DepthFirstTraverser | MaxPredictionDegreeTraverser | null = null
-  _outPointIds: Int32Array = new Int32Array(0)
+  _outPointIds: Int32Array = EMPTY_INT32
   _numOutPoints = 0
   // Per-decode cache, keyed by corner table, shared across the attribute
   // decoders of one mesh (see MeshEdgebreakerDecoderImpl).
@@ -43,24 +44,31 @@ class MeshTraversalSequencer {
   // One representative corner per point id, when the connectivity decoder
   // recorded them (see MeshEdgebreakerDecoderImpl._assignAttributeVerticesAndPoints).
   _pointCorner: Int32Array | null
+  // The corner table whose vertex ids are the point ids, if any.
+  _pointVertexTable: CornerTable | MeshAttributeCornerTable | null
 
   constructor(
     mesh: Mesh,
     encodingData: MeshAttributeIndicesEncodingData,
     traversalCache: TraversalCache,
     pointCorner: Int32Array | null,
+    pointVertexTable: CornerTable | MeshAttributeCornerTable | null,
   ) {
     this._mesh = mesh
     this._encodingData = encodingData
     this._traversalCache = traversalCache
     this._pointCorner = pointCorner
+    this._pointVertexTable = pointVertexTable
   }
 
   setTraverser(traverser: DepthFirstTraverser | MaxPredictionDegreeTraverser): void {
     this._traverser = traverser
   }
 
-  generateSequence(): boolean {
+  // With parallelogramParents set, a depth-first traversal also records the
+  // parallelogram parents of its values (see
+  // MeshPredictionSchemeData.parallelogramParents), stored with the result.
+  generateSequence(parallelogramParents: boolean): boolean {
     // A traversal's output (point order + encoding maps) depends only on the
     // corner table's connectivity AND the traversal method, not on the
     // attribute being decoded. Meshes with several vertex-mapped attributes
@@ -84,6 +92,12 @@ class MeshTraversalSequencer {
       return true
     }
 
+    const traverser = this._traverser!
+    let parents: Int32Array | null = null
+    if (parallelogramParents && traverser instanceof DepthFirstTraverser) {
+      parents = scratchInt32(encodingData.vertexToEncodedAttributeValueIndexMap.length * 3)
+      traverser._parents = parents
+    }
     if (!this._generateSequenceInternal()) {
       return false
     }
@@ -106,7 +120,7 @@ class MeshTraversalSequencer {
       cornerMap: encodingData.encodedAttributeValueIndexToCornerMap,
       numValues,
       indicesMap: null,
-      parents: null,
+      parents,
     }
     byMethod.set(methodId, entry)
     encodingData.cacheEntry = entry
@@ -145,7 +159,17 @@ class MeshTraversalSequencer {
     const vertexToAttEntry = this._encodingData.vertexToEncodedAttributeValueIndexMap
     const indicesMap = attribute.indicesMap
     const pointCorner = this._pointCorner
-    if (pointCorner !== null) {
+    if (cornerTable === this._pointVertexTable) {
+      // The table's vertices are the points: each point's value is its own
+      // vertex's.
+      for (let p = 0; p < numPoints; ++p) {
+        const attEntryId = vertexToAttEntry[p]
+        if (attEntryId < 0 || attEntryId >= numPoints) {
+          return false
+        }
+        indicesMap[p] = attEntryId
+      }
+    } else if (pointCorner !== null) {
       // All corners of a point share its attribute vertex (that is what makes
       // them one point), so one representative corner per point gives the
       // same map as visiting every corner -- in a loop over the points

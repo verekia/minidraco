@@ -29,7 +29,7 @@ export class DataBuffer {
   _resize(newSize: number): void {
     if (newSize === this._data.length) return
     const newData = new Uint8Array(newSize)
-    newData.set(this._data.subarray(0, Math.min(this._data.length, newSize)))
+    if (this._data.length > 0) newData.set(this._data.subarray(0, Math.min(this._data.length, newSize)))
     this._data = newData
   }
 }
