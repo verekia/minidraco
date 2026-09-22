@@ -1,6 +1,7 @@
 // Ported from draco.js src/compression/attributes/SequentialAttributeDecodersController.js (MIT)
 
-import { SequentialAttributeEncoderType } from '../config/CompressionShared'
+import { EMPTY_INT32 } from '../../core/ScratchArena'
+import { PredictionSchemeMethod, SequentialAttributeEncoderType } from '../config/CompressionShared'
 import { AttributesDecoder } from './AttributesDecoder'
 import { SequentialAttributeDecoder } from './SequentialAttributeDecoder'
 import { SequentialIntegerAttributeDecoder } from './SequentialIntegerAttributeDecoder'
@@ -14,7 +15,7 @@ import type { PendingSymbolStream } from './SequentialAttributeDecoder'
 
 // Structural interface satisfied by LinearSequencer and MeshTraversalSequencer.
 export interface PointsSequencer {
-  generateSequence(): boolean
+  generateSequence(parallelogramParents: boolean): boolean
   getOutputPointIds(): Int32Array
   updatePointToAttributeIndexMapping(attribute: PointAttribute): boolean
 }
@@ -24,7 +25,7 @@ export interface PointsSequencer {
 class SequentialAttributeDecodersController extends AttributesDecoder implements AttributesDecoderInterface {
   _sequentialDecoders: SequentialAttributeDecoder[] = []
   // Replaced by the sequencer's output in _prepareSequence.
-  _pointIds: Int32Array = new Int32Array(0)
+  _pointIds: Int32Array = EMPTY_INT32
   _sequencer: PointsSequencer
 
   constructor(sequencer: PointsSequencer) {
@@ -50,8 +51,18 @@ class SequentialAttributeDecodersController extends AttributesDecoder implements
     return true
   }
 
-  _prepareSequence(): boolean {
-    if (!this._sequencer.generateSequence()) {
+  _prepareSequence(buffer: DecoderBuffer): boolean {
+    // The first attribute's data starts right here, and an integer decoder's
+    // starts with its prediction method: when that is the parallelogram, the
+    // traversal records the parallelogram parents on the way (see
+    // DepthFirstTraverser.traverseAll) instead of leaving them to a
+    // pass of their own.
+    const first = this._sequentialDecoders[0]
+    const parallelogram =
+      first instanceof SequentialIntegerAttributeDecoder &&
+      buffer.remainingSize > 0 &&
+      buffer.data[buffer.decodedSize] === PredictionSchemeMethod.MESH_PREDICTION_PARALLELOGRAM
+    if (!this._sequencer.generateSequence(parallelogram)) {
       return false
     }
     this._pointIds = this._sequencer.getOutputPointIds()
@@ -74,7 +85,7 @@ class SequentialAttributeDecodersController extends AttributesDecoder implements
   // of the finish work reads the buffer, and dependents only read parent
   // portable VALUES in finish, so ordering and output stay identical.
   decodeAttributesParse(buffer: DecoderBuffer): boolean {
-    if (!this._prepareSequence()) {
+    if (!this._prepareSequence(buffer)) {
       return false
     }
     const decoders = this._sequentialDecoders

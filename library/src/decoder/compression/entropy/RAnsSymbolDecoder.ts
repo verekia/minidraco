@@ -85,7 +85,7 @@ export class RAnsSymbolDecoder {
       return false
     }
 
-    // Absolute offsets into the source buffer — avoids a dataHead subarray
+    // Absolute offsets into the source buffer — avoids a subarray
     // allocation per symbol decoder (thousands per primitive-heavy GLB).
     const base = buffer.decodedSize
     buffer.advance(Number(bytesEncoded))

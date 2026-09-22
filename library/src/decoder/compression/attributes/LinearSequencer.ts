@@ -13,7 +13,7 @@ class LinearSequencer {
     this._numPoints = numPoints
   }
 
-  generateSequence(): boolean {
+  generateSequence(_parallelogramParents: boolean): boolean {
     if (this._numPoints < 0) {
       return false
     }

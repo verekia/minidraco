@@ -24,7 +24,7 @@ export class RAnsBitDecoder {
       return false
     }
 
-    // Absolute offsets into the source buffer — avoids a dataHead subarray
+    // Absolute offsets into the source buffer — avoids a subarray
     // allocation per bit decoder.
     const base = sourceBuffer.decodedSize
     if (!ansReadInit(this.ansDecoder_, sourceBuffer.data, base + sizeInBytes, base, ANS_L_BASE, 3)) {

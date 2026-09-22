@@ -24,8 +24,10 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
   _pendingSymbolDecoder: RAnsSymbolDecoder | null = null
   _pendingNumValues = 0
   _finishPointIds: Int32Array | null = null
-  // Int32 view over the portable attribute's storage (see preparePortableAttribute).
+  // The decoded (portable) values, numComponents per entry (see
+  // preparePortableAttribute).
   _portableData: Int32Array | null = null
+  _portableComponents = 0
 
   // --- Two-phase decode (parse headers / batch symbol decode / finish) ---
 
@@ -228,32 +230,41 @@ class SequentialIntegerAttributeDecoder extends SequentialAttributeDecoder {
     return true
   }
 
+  // Heap-backed: the decoded values are what the final attribute hands out
+  // (see _storeValues), so they outlive the decode. The portable
+  // PointAttribute around them is only built if a dependent attribute's
+  // predictor asks for it (see getPortableAttribute).
   preparePortableAttribute(numEntries: number, numComponents: number): void {
-    const ga = new GeometryAttribute()
-    ga.init(
-      this.attribute!.attributeType,
-      null,
-      numComponents,
-      DataType.INT32,
-      false,
-      numComponents * dataTypeLength(DataType.INT32),
-      0,
-    )
-    const portAtt = new PointAttribute(ga)
-    portAtt.setIdentityMapping()
-    // Heap-backed: the decoded values are what the final attribute hands out
-    // (see _storeValues), so they outlive the decode.
-    portAtt.reset(numEntries)
-    portAtt.uniqueId = this.attribute!.uniqueId
-    this._portableAttribute = portAtt
-    // One Int32 view over the portable storage for the whole decode (the
-    // storage is fixed here); the per-call subarray + view pair it replaces
-    // was allocated several times per attribute.
-    const data = portAtt.buffer!.data
-    this._portableData =
-      numEntries === 0
-        ? null
-        : new Int32Array(data.buffer, data.byteOffset + portAtt.byteOffset, numEntries * numComponents)
+    this._portableComponents = numComponents
+    this._portableData = numEntries === 0 ? null : new Int32Array(numEntries * numComponents)
+  }
+
+  override getPortableAttribute(): PointAttribute | null {
+    const numComponents = this._portableComponents
+    if (this._portableAttribute === null && numComponents > 0) {
+      const ga = new GeometryAttribute()
+      ga.init(
+        this.attribute!.attributeType,
+        null,
+        numComponents,
+        DataType.INT32,
+        false,
+        numComponents * dataTypeLength(DataType.INT32),
+        0,
+      )
+      const portAtt = new PointAttribute(ga)
+      portAtt.setIdentityMapping()
+      const data = this._portableData
+      if (data === null) portAtt.reset(0)
+      else
+        portAtt.resetWithData(
+          new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+          data.length / numComponents,
+        )
+      portAtt.uniqueId = this.attribute!.uniqueId
+      this._portableAttribute = portAtt
+    }
+    return super.getPortableAttribute()
   }
 }
 

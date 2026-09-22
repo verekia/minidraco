@@ -1,5 +1,6 @@
 // Ported from draco.js src/compression/attributes/prediction_schemes/MeshPredictionSchemeTexCoordsPortablePredictor.js (MIT)
 
+import { EMPTY_UINT8 } from '../../../core/ScratchArena'
 import { fillInt32PositionCache } from './MeshPredictionSchemeGeometricNormalPredictorArea'
 
 import type { PointAttribute } from '../../../attributes/PointAttribute'
@@ -32,10 +33,9 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
   _posAttribute: PointAttribute | null = null
   _entryToPointIdMap: Int32Array | null = null
   _predictedValue = new Int32Array(2)
-  _orientations = new Uint8Array(0)
+  _orientations = EMPTY_UINT8
   _numOrientations = 0
   _meshData: MeshPredictionSchemeData
-  _tempPos: number[] = new Array(3)
   // Flat Int32 position cache so fetches are array reads, not convertValue calls.
   _posCache: Int32Array | null = null
   _cornerToVertex: Int32Array | null = null
@@ -67,7 +67,7 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
 
   buildPositionCache(numEntries: number): void {
     const posCache = new Int32Array(numEntries * 3)
-    fillInt32PositionCache(posCache, this._posAttribute!, this._entryToPointIdMap!, numEntries, this._tempPos)
+    fillInt32PositionCache(posCache, this._posAttribute!, this._entryToPointIdMap!, numEntries)
     this._posCache = posCache
     this._cornerToVertex = this._meshData.cornerTable.cornerToVertexArray() as Int32Array
   }
@@ -127,31 +127,29 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
         const pnUV0 = pUV0 - nUV0
         const pnUV1 = pUV1 - nUV1
 
-        const INT64_MAX = 2 ** 63 // rounds to 2^63 as a double, same as the source literal
         const nUVAbsMax = Math.max(Math.abs(nUV0), Math.abs(nUV1))
-        if (nUVAbsMax > INT64_MAX / pnNorm2Squared) {
-          return false
-        }
-
         const pnUVAbsMax = Math.max(Math.abs(pnUV0), Math.abs(pnUV1))
-        if (pnUVAbsMax > 0 && Math.abs(cnDotPn) > INT64_MAX / pnUVAbsMax) {
-          return false
-        }
+        const cnNorm2 = cn0 * cn0 + cn1 * cn1 + cn2 * cn2
+        const pnAbsMaxG = Math.max(Math.abs(pn0), Math.abs(pn1), Math.abs(pn2))
+        const cnDotPnAbs = Math.abs(cnDotPn)
 
         // Remaining arithmetic is int64 in C++. With small quantized positions
         // every intermediate fits 2^53 so double math is bit-exact; high
         // quantization (e.g. cl10's 20-bit) overflows 2^53 and we drop to the
-        // BigInt path mirroring C++ int64/uint64. Products that can exceed 2^53:
-        // nUV*pnNorm2, cnDotPn*pnUV, cnDotPn*pn, and cxNorm2*pnNorm2 (the last
-        // bounded by cnNorm2*pnNorm2, since cx is never longer than cn).
-        const cnNorm2 = cn0 * cn0 + cn1 * cn1 + cn2 * cn2
-        const pnAbsMaxG = Math.max(Math.abs(pn0), Math.abs(pn1), Math.abs(pn2))
-        const cnDotPnAbs = Math.abs(cnDotPn)
+        // BigInt path mirroring C++ int64/uint64, overflow guards included.
+        // Products that can exceed 2^53: nUV*pnNorm2, cnDotPn*pnUV,
+        // cnDotPn*pn, and cxNorm2*pnNorm2 (the last bounded by
+        // cnNorm2*pnNorm2, since cx is never longer than cn). A double gets
+        // the comparison of a product against 2^53 exactly right (a product
+        // below it is exact, one at or above it cannot round below it), and
+        // below it none of the C++ guards against INT64_MAX can trip.
         if (
-          cnNorm2 > SAFE_PRODUCT / pnNorm2Squared ||
-          nUVAbsMax > SAFE_PRODUCT / pnNorm2Squared ||
-          (pnUVAbsMax > 0 && cnDotPnAbs > SAFE_PRODUCT / pnUVAbsMax) ||
-          (pnAbsMaxG > 0 && cnDotPnAbs > SAFE_PRODUCT / pnAbsMaxG)
+          !(
+            cnNorm2 * pnNorm2Squared < SAFE_PRODUCT &&
+            nUVAbsMax * pnNorm2Squared < SAFE_PRODUCT &&
+            cnDotPnAbs * pnUVAbsMax < SAFE_PRODUCT &&
+            cnDotPnAbs * pnAbsMaxG < SAFE_PRODUCT
+          )
         ) {
           return this._computePredictedValueBig(
             tip0,
@@ -174,11 +172,6 @@ class MeshPredictionSchemeTexCoordsPortablePredictor {
         // x_uv = nUV * pnNorm2Squared + cnDotPn * pnUV
         const xUV0 = nUV0 * pnNorm2Squared + cnDotPn * pnUV0
         const xUV1 = nUV1 * pnNorm2Squared + cnDotPn * pnUV1
-
-        // pnAbsMaxG and cnDotPnAbs were computed above and are unchanged here.
-        if (pnAbsMaxG > 0 && cnDotPnAbs > INT64_MAX / pnAbsMaxG) {
-          return false
-        }
 
         // x_pos = nextPos + (cnDotPn * pn) / pnNorm2Squared
         const xPos0 = next0 + Math.trunc((cnDotPn * pn0) / pnNorm2Squared)

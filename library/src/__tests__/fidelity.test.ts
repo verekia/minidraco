@@ -19,8 +19,9 @@ import type { DecodedPrimitive } from '../../scripts/harness'
 
 const FLOAT_ULP_TOLERANCE = 0
 
+// Object.is, not ===: a +0 / -0 mismatch is a different float32 bit pattern.
 const ulpDiff = (a: number, b: number): number => {
-  if (a === b) return 0
+  if (Object.is(a, b)) return 0
   if (Number.isNaN(a) || Number.isNaN(b)) return Infinity
   const bufA = new Int32Array(new Float32Array([a]).buffer)[0]
   const bufB = new Int32Array(new Float32Array([b]).buffer)[0]
@@ -47,7 +48,7 @@ const compare = (actual: DecodedPrimitive, expected: DecodedPrimitive, label: st
     for (let i = 0; i < expectedAttribute.data.length; i++) {
       const a = actualAttribute.data[i]
       const e = expectedAttribute.data[i]
-      if (a === e) continue
+      if (Object.is(a, e)) continue
       if (isFloat) {
         const ulp = ulpDiff(a, e)
         if (ulp > maxUlp) maxUlp = ulp

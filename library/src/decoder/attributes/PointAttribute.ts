@@ -116,6 +116,16 @@ class PointAttribute extends GeometryAttribute {
     return true
   }
 
+  // Takes `data` (numAttributeValues values in the attribute's layout) as its
+  // storage, without a copy.
+  resetWithData(data: Uint8Array, numAttributeValues: number): void {
+    const buffer = new DataBuffer()
+    buffer._data = data
+    this._attributeBuffer = buffer
+    this.resetBuffer(buffer, dataTypeLength(this.dataType) * this.numComponents, 0)
+    this._numUniqueEntries = numAttributeValues
+  }
+
   // Sizes the attribute without allocating storage, for the deferred
   // transforms below (the values live in the decoder's portable attribute).
   resetLazy(numAttributeValues: number): void {
@@ -252,9 +262,17 @@ class PointAttribute extends GeometryAttribute {
     const kind = this._lazyKind
     if (kind !== LAZY_NONE) {
       if (this._lazyValues !== null) {
-        if (kind === LAZY_QUANTIZED) this._extractQuantized(array, numPoints)
-        else if (kind === LAZY_OCTAHEDRON) this._extractOctahedron(array, numPoints)
-        else this._extractInteger(array, numPoints)
+        if (kind === LAZY_INTEGER) {
+          this._extractInteger(array, numPoints)
+        } else {
+          // The float transforms produce float32 values: they write them into
+          // a Float32Array, whose stores round like the C++ float results, and
+          // any other output type converts them from there.
+          const floats = array instanceof Float32Array ? array : new Float32Array(array.length)
+          if (kind === LAZY_QUANTIZED) this._extractQuantized(floats, numPoints)
+          else this._extractOctahedron(floats, numPoints)
+          if (floats !== array) array.set(floats)
+        }
       }
       return array
     }
@@ -328,8 +346,9 @@ class PointAttribute extends GeometryAttribute {
     return values
   }
 
-  // C++ Dequantizer: float(value) * delta + min, all in float32.
-  _extractQuantized(out: ExtractTypedArray, numPoints: number): void {
+  // C++ Dequantizer: float(value) * delta + min, all in float32 (the final
+  // rounding is the Float32Array store's).
+  _extractQuantized(out: Float32Array, numPoints: number): void {
     const values = this._lazyFloatValues()
     const map = this._lazyMap(numPoints)
     const numComponents = this._numComponents
@@ -342,9 +361,9 @@ class PointAttribute extends GeometryAttribute {
       const m2 = min[2]
       for (let p = 0, d = 0; p < numPoints; ++p, d += 3) {
         const s = map[p] * 3
-        out[d] = fround(fround(values[s] * delta) + m0)
-        out[d + 1] = fround(fround(values[s + 1] * delta) + m1)
-        out[d + 2] = fround(fround(values[s + 2] * delta) + m2)
+        out[d] = fround(values[s] * delta) + m0
+        out[d + 1] = fround(values[s + 1] * delta) + m1
+        out[d + 2] = fround(values[s + 2] * delta) + m2
       }
       return
     }
@@ -353,22 +372,27 @@ class PointAttribute extends GeometryAttribute {
       const m1 = min[1]
       for (let p = 0, d = 0; p < numPoints; ++p, d += 2) {
         const s = map[p] * 2
-        out[d] = fround(fround(values[s] * delta) + m0)
-        out[d + 1] = fround(fround(values[s + 1] * delta) + m1)
+        out[d] = fround(values[s] * delta) + m0
+        out[d + 1] = fround(values[s + 1] * delta) + m1
       }
       return
     }
     for (let p = 0, d = 0; p < numPoints; ++p) {
       const s = map[p] * numComponents
       for (let c = 0; c < numComponents; ++c) {
-        out[d++] = fround(fround(values[s + c] * delta) + min[c])
+        out[d++] = fround(values[s + c] * delta) + min[c]
       }
     }
   }
 
   // OctahedronToolBox.QuantizedOctahedralCoordsToUnitVector, two quantized
-  // coordinates per value to one unit vector per point.
-  _extractOctahedron(out: ExtractTypedArray, numPoints: number): void {
+  // coordinates per value to one unit vector per point, branch-free: the
+  // signs of the normals' components are unpredictable, so the fold picks
+  // its direction arithmetically (multiplying by +-1 is exact, zero signs
+  // included). The C++ zero-vector guard (squared norm below 1e-6) is left
+  // out because no input reaches it: |x| + |y| + |z| >= 1 before the fold,
+  // which moves y and z by at most |x|, so some component stays above 1/6.
+  _extractOctahedron(out: Float32Array, numPoints: number): void {
     const values = this._lazyFloatValues()
     const map = this._lazyMap(numPoints)
     const fround = Math.fround
@@ -378,24 +402,15 @@ class PointAttribute extends GeometryAttribute {
       let y = fround(fround(values[s] * scale) - 1.0)
       let z = fround(fround(values[s + 1] * scale) - 1.0)
       const x = fround(fround(1.0 - Math.abs(y)) - Math.abs(z))
-
-      let xOffset = -x
-      if (xOffset < 0) xOffset = 0
-
-      y = fround(y + (y < 0 ? xOffset : -xOffset))
-      z = fround(z + (z < 0 ? xOffset : -xOffset))
-
-      const normSquared = fround(fround(fround(x * x) + fround(y * y)) + fround(z * z))
-      if (normSquared < 1e-6) {
-        out[d] = 0
-        out[d + 1] = 0
-        out[d + 2] = 0
-      } else {
-        const k = fround(1.0 / fround(Math.sqrt(normSquared)))
-        out[d] = fround(x * k)
-        out[d + 1] = fround(y * k)
-        out[d + 2] = fround(z * k)
-      }
+      // max(-x, 0) may be +0 where the C++ has -0; y and z are never -0, so
+      // the sums below are the same.
+      const xOffset = Math.max(-x, 0)
+      y = fround(y + xOffset * (2 * +(y < 0) - 1))
+      z = fround(z + xOffset * (2 * +(z < 0) - 1))
+      const k = fround(1.0 / fround(Math.sqrt(fround(fround(fround(x * x) + fround(y * y)) + fround(z * z)))))
+      out[d] = x * k
+      out[d + 1] = y * k
+      out[d + 2] = z * k
     }
   }
 

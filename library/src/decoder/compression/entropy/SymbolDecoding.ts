@@ -45,7 +45,22 @@ export function decodeTaggedSymbols(
     return false
   }
 
-  const tagAns = tagDecoder.ans_
+  // The tag stream is decoded inline, its rANS state in locals (as in
+  // RAnsDecoder.decodeSymbols): its chain and the bit reader's are
+  // independent, and without a call per tag the two overlap.
+  const ans = tagDecoder.ans_
+  const ansBuf = ans.buf!
+  const ansStart = ans.bufStart
+  const lRansBase = ans.lRansBase
+  const precisionBits = ans.ransPrecisionBits
+  const precisionMask = ans.ransPrecisionMask
+  const probTable = ans.probTable!
+  const cumProbTable = ans.cumProbTable!
+  const lutTable = ans.lutTable
+  const bucketTable = ans.bucketTable!
+  const bucketShift = ans.bucketShift
+  let state = ans.state
+  let ansOffset = ans.bufOffset
 
   srcBuffer.startBitDecoding(false)
   // After startBitDecoding(false) the buffer is in bit mode; read the bits
@@ -57,7 +72,18 @@ export function decodeTaggedSymbols(
   let bitOffset = bd._bitOffset
   let valueId = 0
   for (let i = 0; i < numValues; i += numComponents) {
-    const bitLength = tagAns.ransRead()
+    while (state < lRansBase && ansOffset > ansStart) {
+      state = (state << 8) | ansBuf[--ansOffset]
+    }
+    const rem = state & precisionMask
+    let bitLength: number
+    if (lutTable !== null) {
+      bitLength = lutTable[rem]
+    } else {
+      bitLength = bucketTable[rem >> bucketShift]
+      while (cumProbTable[bitLength + 1] <= rem) bitLength++
+    }
+    state = (state >>> precisionBits) * probTable[bitLength] + rem - cumProbTable[bitLength]
     // getBits' fast path needs 5 readable bytes and a mask that fits in 31
     // bits; anything else (a wide or out-of-range tag, the tail of the buffer)
     // falls back to it, which also produces the undefined that ends the decode.
@@ -99,6 +125,8 @@ export function decodeTaggedSymbols(
       bitOffset = bd._bitOffset
     }
   }
+  ans.state = state
+  ans.bufOffset = ansOffset
   bd._bitOffset = bitOffset
   tagDecoder.endDecoding()
   srcBuffer.endBitDecoding()

@@ -96,9 +96,9 @@ describe('raw .drc fixtures', () => {
             const a = actual[i]
             const e = expectedAttribute.data[i]
             // Bit-exact, floats included: every float path mirrors the wasm
-            // decoder's float32 arithmetic via Math.fround (=== also treats
-            // +0/-0 as equal, matching the fidelity suite's ulp convention).
-            if (a === e) continue
+            // decoder's float32 arithmetic via Math.fround (Object.is also
+            // tells +0 from -0, as the fidelity suite does).
+            if (Object.is(a, e)) continue
             throw new Error(`${fixture}: attribute ${expectedAttribute.uniqueId} differs at ${i}: ${a} !== ${e}`)
           }
         }

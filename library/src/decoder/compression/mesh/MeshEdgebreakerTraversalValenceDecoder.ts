@@ -1,6 +1,6 @@
 // Ported from draco.js src/compression/mesh/MeshEdgebreakerTraversalValenceDecoder.js (MIT)
 
-import { scratchInt32Filled, scratchUint32 } from '../../core/ScratchArena'
+import { EMPTY_INT32, scratchInt32Filled, scratchUint32 } from '../../core/ScratchArena'
 import { decodeVarint } from '../../core/VarintDecoding'
 import { SymbolCodingMethod } from '../config/CompressionShared'
 import { ransDecodeStreams } from '../entropy/ANSCoding'
@@ -32,15 +32,15 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
   _activeContext = -1
   _minValence = 2
   _maxValence = 7
-  _vertexValences: Int32Array = new Int32Array(0)
+  _vertexValences: Int32Array = EMPTY_INT32
   _contextSymbols: Uint32Array[] = []
   // Int32Array, not number[]: read and written once per decoded symbol.
-  _contextCounters: Int32Array = new Int32Array(0)
+  _contextCounters: Int32Array = EMPTY_INT32
   // corner -> vertex of _cornerTable, cached at init(); the array is created
   // once by CornerTable.reset() before the traversal decoder is initialized and
   // never replaced, so the per-symbol hot path can read it without two property
   // loads.
-  _cornerToVertex: Int32Array = new Int32Array(0)
+  _cornerToVertex: Int32Array = EMPTY_INT32
 
   override init(decoder: MeshEdgebreakerDecoderImpl): void {
     super.init(decoder)
@@ -59,7 +59,7 @@ class MeshEdgebreakerTraversalValenceDecoder extends MeshEdgebreakerTraversalDec
     if (!this.decodeAttributeSeams()) {
       return false
     }
-    outBuffer.init(this._buffer.dataHead, this._buffer.remainingSize)
+    outBuffer.initFrom(this._buffer)
 
     // Int32Array: read/written for every decoded symbol; typed access keeps
     // the newActiveCornerReached hot path monomorphic. Decode-scoped scratch,
