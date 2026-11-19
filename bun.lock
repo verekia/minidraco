@@ -5,7 +5,7 @@
     "": {
       "name": "minidraco-monorepo",
       "devDependencies": {
-        "@verekia/warden": "0.0.4",
+        "@verekia/warden": "0.0.6",
         "husky": "9.1.7",
         "oxlint": "1.63.0",
       },
@@ -404,7 +404,7 @@
 
     "@use-gesture/react": ["@use-gesture/react@10.3.1", "", { "dependencies": { "@use-gesture/core": "10.3.1" }, "peerDependencies": { "react": ">= 16.8.0" } }, "sha512-Yy19y6O2GJq8f7CHf7L0nxL8bf4PZCPaVOCgJrusOeFHY1LvHgYXnmnXg6N5iwAnbgbZCDjo60SiM6IPJi9C5g=="],
 
-    "@verekia/warden": ["@verekia/warden@0.0.4", "", { "bin": { "warden": "src/index.ts" } }, "sha512-xRWY5F3rpZfFoKpmAOpHQor59edQvQGoudKvNoSQHVZelpjwa3pr31H9ARCsuJ4QFvlKBV+Qbq3VocYi8KtWxg=="],
+    "@verekia/warden": ["@verekia/warden@0.0.6", "", { "bin": { "warden": "src/index.ts" } }, "sha512-Q5VtPnZhdClbgjzyoymkTdpQJ/DymQg3576f8+UMdjfpykRWKytBdWC6RAzXCMEw1jWtvaeNVvdLmW5pYIIT+g=="],
 
     "@webgpu/types": ["@webgpu/types@0.1.71", "", {}, "sha512-mMy8/ODcKhab808co15eW+yN+HgXoQxRQHTiBV9Mrvl1r0ufnid7YOcI+gi4eUWSWl9ezD6TW2KXccrL8HCh2A=="],
 
