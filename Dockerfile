@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.14-alpine AS builder
+FROM oven/bun:1.4.4-alpine AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY library/package.json library/package.json
 # https://github.com/oven-sh/bun/issues/4938
 RUN echo 'net.ipv6.conf.all.disable_ipv6 = 1' >> /etc/sysctl.conf || true
 
-RUN bun i
+RUN bun i --ignore-scripts
 
 COPY . .
 
