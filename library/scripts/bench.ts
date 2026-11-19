@@ -137,8 +137,8 @@ if (QUICK) {
     })),
   }
   writeFileSync(benchJsonPath, `${JSON.stringify(json, null, 2)}\n`)
-  const oxfmt = Bun.spawnSync(['bunx', 'oxfmt', benchJsonPath])
-  if (oxfmt.exitCode !== 0) console.warn(`oxfmt failed on BENCH.json: ${oxfmt.stderr.toString().trim()}`)
+  const fmt = Bun.spawnSync(['bun', 'fmt', benchJsonPath])
+  if (fmt.exitCode !== 0) console.warn(`bun fmt failed on BENCH.json: ${fmt.stderr.toString().trim()}`)
   console.log(`\nWrote ${benchJsonPath}`)
 
   // Re-render BENCH.md (bun section from the fresh BENCH.json, browser

@@ -9,7 +9,7 @@
     "sync-samples": "bun scripts/sync-samples.ts",
     "build": "next build",
     "start": "serve out",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun check"
   },
   "dependencies": {
     "@react-three/drei": "11.0.0-alpha.5",

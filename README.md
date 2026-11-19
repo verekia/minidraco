@@ -7,8 +7,8 @@ worker pool so decoding never blocks the main thread.
 ## Usage
 
 ```ts
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MinidracoLoader } from 'minidraco/three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 const gltfLoader = new GLTFLoader()
 gltfLoader.setDRACOLoader(new MinidracoLoader())

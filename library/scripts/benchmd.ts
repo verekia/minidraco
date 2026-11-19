@@ -54,7 +54,7 @@ const versus = (miniMs: number, otherMs: number): string => {
   return '⚪ even'
 }
 
-// Plain unpadded rows: the caller runs oxfmt on the file, which owns the
+// Plain unpadded rows: the caller runs bun fmt on the file, which owns the
 // final column alignment (emoji display widths make hand-padding fragile).
 const resultsTable = (results: ResultRow[]): string[] => {
   const withCounts = results[0]?.primitives !== undefined
@@ -193,10 +193,10 @@ export const writeBenchMd = (): void => {
   const benchMdPath = resolve(repoRoot, 'BENCH.md')
   writeFileSync(benchMdPath, renderBenchMd(bun, browser))
 
-  // oxfmt owns the final table padding — emoji column widths are hard to
-  // reproduce by hand and the file must pass `oxfmt --check`
-  const oxfmt = Bun.spawnSync(['bunx', 'oxfmt', benchMdPath])
-  if (oxfmt.exitCode !== 0) console.warn(`oxfmt failed on BENCH.md: ${oxfmt.stderr.toString().trim()}`)
+  // bun fmt owns the final table padding — emoji column widths are hard to
+  // reproduce by hand and the file must pass `bun fmt --check`
+  const fmt = Bun.spawnSync(['bun', 'fmt', benchMdPath])
+  if (fmt.exitCode !== 0) console.warn(`bun fmt failed on BENCH.md: ${fmt.stderr.toString().trim()}`)
   console.log(`Wrote ${benchMdPath}`)
 }
 
